@@ -1,11 +1,13 @@
 from humanoid_climber.tasks.g1_ice import (
   EVAL_FRICTION,
   EVAL_FORWARD_VELOCITY,
+  EVAL_SLOPE_GRADIENT,
   TRAIN_FRICTION_RANGE,
   unitree_g1_ice_env_cfg,
 )
 from mjlab.tasks.velocity.config.g1.env_cfgs import unitree_g1_flat_env_cfg
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+from mjlab.terrains import HfPyramidSlopedTerrainCfg
 
 
 def test_ice_task_keeps_stock_policy_interface() -> None:
@@ -47,3 +49,17 @@ def test_ice_play_uses_fixed_fast_forward_command() -> None:
   assert not twist_cmd.heading_command
   assert twist_cmd.rel_standing_envs == 0.0
   assert twist_cmd.rel_forward_envs == 1.0
+
+
+def test_ice_play_uses_fixed_uphill_slope() -> None:
+  play = unitree_g1_ice_env_cfg(play=True)
+  assert play.scene.terrain is not None
+  assert play.scene.terrain.terrain_type == "generator"
+  generator = play.scene.terrain.terrain_generator
+  assert generator is not None
+  assert generator.difficulty_range == (1.0, 1.0)
+
+  slope = generator.sub_terrains["ice_slope"]
+  assert isinstance(slope, HfPyramidSlopedTerrainCfg)
+  assert slope.slope_range == (EVAL_SLOPE_GRADIENT, EVAL_SLOPE_GRADIENT)
+  assert slope.inverted
