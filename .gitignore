@@ -1,0 +1,13 @@
+.venv/
+.venv-rl/
+__pycache__/
+*.py[cod]
+
+# Training outputs and downloaded checkpoints belong outside Git.
+ckpt/
+checkpoints/
+logs/
+*.pt
+
+# macOS
+.DS_Store
