@@ -64,6 +64,10 @@ one PPO iteration were smoke-tested locally on August 29, 2026. Full training
 should run on Hugging Face Jobs rather than macOS because MjLab training is
 intended for Linux with NVIDIA acceleration.
 
+The Hugging Face job entry point is `scripts/hf_train.sh`. Its `NUM_ENVS`,
+`MAX_ITERATIONS`, `RUN_NAME`, and `HF_OUTPUT_REPO` environment variables allow
+the same immutable project snapshot to run a short smoke test or the full job.
+
 ## Baseline result
 
 On August 29, 2026, the stock policy could walk sideways at low speed and made
