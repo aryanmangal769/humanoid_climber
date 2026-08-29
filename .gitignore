@@ -1,0 +1,6 @@
+vendor/mujoco_playground/.venv/
+vendor/mujoco_playground/external_deps/
+.venv-rl/
+logs/
+__pycache__/
+*.pyc

@@ -1,24 +1,25 @@
-"""Verify that MuJoCo Playground can construct and reset the native Unitree G1 task."""
-
-from __future__ import annotations
+"""Verify the canonical Unitree RL MjLab G1 scene."""
 
 import json
 
-import jax
-from mujoco_playground import locomotion
+import mujoco
 
-from .g1_model import validate_g1
+from .g1_model import G1_XML, validate_g1
 
 
 def main() -> None:
-    env = locomotion.load("G1JoystickFlatTerrain")
-    state = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    model = mujoco.MjModel.from_xml_path(str(G1_XML))
+    data = mujoco.MjData(model)
+    data.qpos[2] = 0.793
+    data.qpos[3:7] = (1.0, 0.0, 0.0, 0.0)
+    mujoco.mj_forward(model, data)
     result = validate_g1()
     result.update(
-        observation_shapes={name: list(value.shape) for name, value in state.obs.items()},
-        reward_shape=list(state.reward.shape),
-        done_shape=list(state.done.shape),
-        backend=jax.default_backend(),
+        backend="native MuJoCo",
+        timestep=float(model.opt.timestep),
+        integrator=mujoco.mjtIntegrator(model.opt.integrator).name,
+        keyframes=int(model.nkey),
+        note="Unitree RL MjLab scene loaded and reset to a standing viewer pose.",
     )
     print(json.dumps(result, indent=2, sort_keys=True))
 

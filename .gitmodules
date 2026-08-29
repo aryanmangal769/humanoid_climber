@@ -1,3 +1,9 @@
 [submodule "vendor/mujoco_playground"]
 	path = vendor/mujoco_playground
 	url = https://github.com/google-deepmind/mujoco_playground.git
+[submodule "vendor/unitree_rl_mjlab"]
+	path = vendor/unitree_rl_mjlab
+	url = https://github.com/unitreerobotics/unitree_rl_mjlab.git
+[submodule "vendor/newton"]
+	path = vendor/newton
+	url = https://github.com/newton-physics/newton.git

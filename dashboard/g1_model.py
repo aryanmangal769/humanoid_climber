@@ -1,41 +1,25 @@
-"""Small, explicit G1 model helpers used by the dashboard checks."""
+"""Canonical Unitree RL MjLab G1 model metadata."""
 
+from functools import lru_cache
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLAYGROUND = ROOT / "vendor" / "mujoco_playground"
-G1_XML = (
-    PLAYGROUND
-    / "mujoco_playground"
-    / "_src"
-    / "locomotion"
-    / "g1"
-    / "xmls"
-    / "scene_mjx_feetonly_flat_terrain.xml"
-)
+G1_XML = ROOT / "vendor" / "unitree_rl_mjlab" / "src" / "assets" / "robots" / "unitree_g1" / "xmls" / "scene_g1.xml"
 
 
-def validate_g1() -> dict:
-    """Load the native Playground G1 environment and return useful metadata."""
-    if not G1_XML.is_file():
-        raise FileNotFoundError(f"G1 XML is missing: {G1_XML}")
-    try:
-        import mujoco
-    except ImportError as exc:  # dashboard can run without the sim installed
-        return {"xml": str(G1_XML), "mujoco": None, "error": str(exc)}
+@lru_cache(maxsize=1)
+def validate_g1() -> dict[str, object]:
+    import mujoco
 
-    try:
-        from mujoco_playground import locomotion
-        env = locomotion.load("G1JoystickFlatTerrain")
-        model = env.mj_model
-    except Exception as exc:
-        return {"xml": str(G1_XML), "mujoco": mujoco.__version__, "error": str(exc)}
+    model = mujoco.MjModel.from_xml_path(str(G1_XML))
     return {
         "xml": str(G1_XML),
         "mujoco": mujoco.__version__,
         "bodies": int(model.nbody),
         "joints": int(model.njnt),
         "actuators": int(model.nu),
-        "environment": "G1JoystickFlatTerrain",
+        "environment": "Unitree-G1-Flat",
+        "source": "unitreerobotics/unitree_rl_mjlab",
+        "source_revision": "1425b15f73bd4095f0df53709d7c389c3eb9e790",
     }

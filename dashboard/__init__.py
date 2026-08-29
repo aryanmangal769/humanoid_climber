@@ -1,1 +1,1 @@
-"""Everest Dream G1 dashboard and read-only telemetry bridge."""
+"""Everest Dream Unitree G1 dashboard."""

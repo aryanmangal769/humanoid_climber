@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="theme-color" content="#090a0c" />
+    <title>Everest · MuJoCo Viewer</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="viewer" aria-label="MuJoCo simulation viewer">
+      <img id="stream" class="stream" src="/stream" alt="Live MuJoCo render of the Unitree G1" />
+      <div class="vignette" aria-hidden="true"></div>
+
+      <header class="topbar">
+        <div class="identity">
+          <span class="mark" aria-hidden="true"></span>
+          <div><strong>EVEREST</strong><span>SIMULATION</span></div>
+        </div>
+        <div class="engine" title="Active physics engine">
+          <span id="connection-dot" class="connection-dot"></span>
+          <strong>MUJOCO</strong>
+          <span id="connection-label">CONNECTING</span>
+        </div>
+      </header>
+
+      <section id="loading" class="loading" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span>
+        <p>Starting MuJoCo renderer</p>
+      </section>
+
+      <section class="readout" aria-label="Simulation readout">
+        <div><span>MODEL</span><strong id="model">Unitree G1</strong></div>
+        <div><span>SIM TIME</span><strong id="sim-time">0.000 s</strong></div>
+        <div><span>RENDER</span><strong id="fps">— fps</strong></div>
+      </section>
+
+      <nav class="transport" aria-label="Viewer controls">
+        <button id="play" class="icon-button primary" type="button" aria-label="Play simulation" title="Play / pause (Space)">
+          <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10-6.5z"/></svg>
+          <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg>
+        </button>
+        <button id="reset" class="icon-button" type="button" aria-label="Reset simulation" title="Reset simulation">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5a7 7 0 1 1-6.32 4H3l3.5-4L10 9H7.75A5 5 0 1 0 12 7z"/></svg>
+        </button>
+        <span class="divider" aria-hidden="true"></span>
+        <div class="camera-control">
+          <button id="camera" class="text-button" type="button" aria-expanded="false" aria-controls="camera-menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h4l1.5-2h5L16 7h4v11H4zm8 2.5A3.5 3.5 0 1 0 12 16a3.5 3.5 0 0 0 0-7m0 2A1.5 1.5 0 1 1 12 14a1.5 1.5 0 0 1 0-3"/></svg>
+            <span>Three-quarter</span>
+            <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9.5 5 5 5-5"/></svg>
+          </button>
+          <div id="camera-menu" class="camera-menu" role="menu" hidden>
+            <button role="menuitem" data-camera="front">Front</button>
+            <button role="menuitem" data-camera="three-quarter" aria-current="true">Three-quarter</button>
+            <button role="menuitem" data-camera="side">Side</button>
+            <button role="menuitem" data-camera="rear">Rear</button>
+          </div>
+        </div>
+      </nav>
+
+      <div id="error" class="error" role="status" hidden>Renderer unavailable. Reconnecting…</div>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
