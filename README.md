@@ -68,6 +68,11 @@ The Hugging Face job entry point is `scripts/hf_train.sh`. Its `NUM_ENVS`,
 `MAX_ITERATIONS`, `RUN_NAME`, and `HF_OUTPUT_REPO` environment variables allow
 the same immutable project snapshot to run a short smoke test or the full job.
 
+On the training Mac, `scripts/poll_hf_job.sh` is installed as the launchd agent
+`com.humclimber.hf-job-poll`. It checks the active job every 20 minutes, writes
+status updates to `logs/job-monitor/hf-job.log`, and shows a macOS notification
+when the job completes or stops with an error.
+
 ## Baseline result
 
 On August 29, 2026, the stock policy could walk sideways at low speed and made
