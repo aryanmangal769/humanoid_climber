@@ -1,4 +1,14 @@
-ork in humanoid_climber. It is empty today, which is fine. Treat it as your project (ice task, scripts, notes). Do not dump the whole mjlab tree into it.
+# Humanoid Climber plan
+
+## Current status — August 29, 2026
+
+- [x] Isolated Python 3.12 environment with `uv` and MjLab 1.6.0.
+- [x] Stock G1 flat-walking checkpoint plays successfully on the Mac.
+- [x] Low-friction task created with training range 0.1–1.0 and fixed evaluation friction 0.2.
+- [x] Same stock policy evaluated at friction 0.2: it walks sideways slowly and attempts to recover balance, but falls under a fast forward command.
+- [ ] Decide the next experiment before spending GPU credits.
+
+Work in humanoid_climber. Treat it as your project (ice task, scripts, notes). Do not dump the whole mjlab tree into it.
 The other Mac helps watch and edit. It does not replace Hugging Face for training: mjlab train still wants Linux + NVIDIA. A faster Mac only makes play less painful.
 
 Machine split

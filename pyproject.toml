@@ -5,3 +5,15 @@ requires-python = ">=3.12"
 dependencies = [
     "mjlab>=1.6.0",
 ]
+
+[project.scripts]
+hum-climber-play = "humanoid_climber.cli:play"
+
+[build-system]
+requires = ["uv_build>=0.8.15,<0.9.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
