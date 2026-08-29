@@ -4,14 +4,12 @@ from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.tasks.registry import register_mjlab_task
 from mjlab.tasks.velocity.config.g1.env_cfgs import unitree_g1_flat_env_cfg
 from mjlab.tasks.velocity.config.g1.rl_cfg import unitree_g1_ppo_runner_cfg
-from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity.rl import VelocityOnPolicyRunner
 from mjlab.terrains import HfPyramidSlopedTerrainCfg, TerrainGeneratorCfg
 
 TASK_ID = "HumClimber-Velocity-Ice-Unitree-G1"
 TRAIN_FRICTION_RANGE = (0.1, 1.0)
 EVAL_FRICTION = 0.15
-EVAL_FORWARD_VELOCITY = 2.0
 EVAL_SLOPE_GRADIENT = 0.2
 
 
@@ -41,27 +39,10 @@ def unitree_g1_ice_env_cfg(*, play: bool = False) -> ManagerBasedRlEnvCfg:
           slope_range=(EVAL_SLOPE_GRADIENT, EVAL_SLOPE_GRADIENT),
           platform_width=1.0,
           inverted=True,
-          horizontal_scale=0.05,
+          horizontal_scale=0.1,
         )
       },
     )
-
-    twist_cmd = cfg.commands["twist"]
-    assert isinstance(twist_cmd, UniformVelocityCommandCfg)
-    twist_cmd.ranges.lin_vel_x = (
-      EVAL_FORWARD_VELOCITY,
-      EVAL_FORWARD_VELOCITY,
-    )
-    # Viser requires a positive range for its optional joystick sliders. The
-    # forward-only override below still sets both values to exactly zero.
-    twist_cmd.ranges.lin_vel_y = (-0.1, 0.1)
-    twist_cmd.ranges.ang_vel_z = (-0.1, 0.1)
-    twist_cmd.ranges.heading = None
-    twist_cmd.heading_command = False
-    twist_cmd.rel_standing_envs = 0.0
-    twist_cmd.rel_heading_envs = 0.0
-    twist_cmd.rel_world_envs = 0.0
-    twist_cmd.rel_forward_envs = 1.0
 
   return cfg
 
