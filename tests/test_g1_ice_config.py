@@ -1,9 +1,11 @@
 from humanoid_climber.tasks.g1_ice import (
   EVAL_FRICTION,
+  EVAL_FORWARD_VELOCITY,
   TRAIN_FRICTION_RANGE,
   unitree_g1_ice_env_cfg,
 )
 from mjlab.tasks.velocity.config.g1.env_cfgs import unitree_g1_flat_env_cfg
+from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 
 
 def test_ice_task_keeps_stock_policy_interface() -> None:
@@ -28,3 +30,20 @@ def test_ice_friction_ranges() -> None:
     EVAL_FRICTION,
     EVAL_FRICTION,
   )
+
+
+def test_ice_play_uses_fixed_fast_forward_command() -> None:
+  play = unitree_g1_ice_env_cfg(play=True)
+  twist_cmd = play.commands["twist"]
+
+  assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+  assert twist_cmd.ranges.lin_vel_x == (
+    EVAL_FORWARD_VELOCITY,
+    EVAL_FORWARD_VELOCITY,
+  )
+  assert twist_cmd.ranges.lin_vel_y == (-0.1, 0.1)
+  assert twist_cmd.ranges.ang_vel_z == (-0.1, 0.1)
+  assert twist_cmd.ranges.heading is None
+  assert not twist_cmd.heading_command
+  assert twist_cmd.rel_standing_envs == 0.0
+  assert twist_cmd.rel_forward_envs == 1.0

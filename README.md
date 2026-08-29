@@ -25,7 +25,9 @@ UV_PROJECT_ENVIRONMENT=.venv-rl uv run hum-climber-play \
 
 The task uses the stock G1 velocity observation and action interfaces, allowing
 the unchanged flat-ground checkpoint to load. Training friction is randomized
-from 0.1 to 1.0; evaluation friction is fixed at 0.2.
+from 0.1 to 1.0; evaluation friction is fixed at 0.2. Playback continuously
+commands 2.0 m/s straight forward with no lateral or angular velocity so falls
+can be reproduced and recorded consistently.
 
 ## Baseline result
 
