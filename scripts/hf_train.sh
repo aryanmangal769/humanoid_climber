@@ -7,7 +7,7 @@ RUN_NAME="${RUN_NAME:-slope-0.2-friction-0.1}"
 HF_OUTPUT_REPO="${HF_OUTPUT_REPO:-Aryanmangal1234/humanoid-climber-policy}"
 
 apt-get update
-apt-get install -y --no-install-recommends libegl1 libgl1
+apt-get install -y --no-install-recommends git libegl1 libgl1
 rm -rf /var/lib/apt/lists/*
 
 rm -rf /job
