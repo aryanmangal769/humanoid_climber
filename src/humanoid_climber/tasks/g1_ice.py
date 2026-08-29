@@ -50,6 +50,7 @@ def unitree_g1_ice_env_cfg(*, play: bool = False) -> ManagerBasedRlEnvCfg:
       },
     )
   else:
+    cfg.events.pop("push_robot", None)
     cfg.scene.terrain.max_init_terrain_level = 2
     cfg.scene.terrain.terrain_generator = TerrainGeneratorCfg(
       seed=42,

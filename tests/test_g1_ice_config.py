@@ -71,6 +71,7 @@ def test_ice_training_uses_slope_curriculum() -> None:
   assert generator.size == TRAIN_TERRAIN_SIZE
   assert generator.num_rows == 10
   assert "terrain_levels" in train.curriculum
+  assert "push_robot" not in train.events
 
   slope = generator.sub_terrains["ice_slope"]
   assert isinstance(slope, HfPyramidSlopedTerrainCfg)
