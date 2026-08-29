@@ -1,6 +1,7 @@
 from humanoid_climber.tasks.g1_ice import (
   EVAL_FRICTION,
   EVAL_SLOPE_GRADIENT,
+  EVAL_TERRAIN_SIZE,
   TRAIN_FRICTION_RANGE,
   unitree_g1_ice_env_cfg,
 )
@@ -45,6 +46,7 @@ def test_ice_play_uses_fixed_uphill_slope() -> None:
   assert play.scene.terrain.terrain_type == "generator"
   generator = play.scene.terrain.terrain_generator
   assert generator is not None
+  assert generator.size == EVAL_TERRAIN_SIZE
   assert generator.difficulty_range == (1.0, 1.0)
 
   slope = generator.sub_terrains["ice_slope"]

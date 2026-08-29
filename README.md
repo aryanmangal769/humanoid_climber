@@ -25,8 +25,9 @@ UV_PROJECT_ENVIRONMENT=.venv-rl uv run hum-climber-play \
 
 The task uses the stock G1 velocity observation and action interfaces, allowing
 the unchanged flat-ground checkpoint to load. Training friction is randomized
-from 0.1 to 1.0. Evaluation uses friction 0.15 on a fixed uphill slope with a
-0.2 gradient (approximately 11.3 degrees). Playback uses the stock randomized
+from 0.1 to 1.0. Evaluation uses friction 0.1 on a fixed uphill slope with a 0.4
+gradient (approximately 21.8 degrees). The 16-by-16-meter terrain provides four
+times the surface area of the earlier test. Playback uses the stock randomized
 velocity commands, including forward, lateral, and turning movement.
 
 ## Baseline result

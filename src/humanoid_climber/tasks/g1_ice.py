@@ -9,15 +9,16 @@ from mjlab.terrains import HfPyramidSlopedTerrainCfg, TerrainGeneratorCfg
 
 TASK_ID = "HumClimber-Velocity-Ice-Unitree-G1"
 TRAIN_FRICTION_RANGE = (0.1, 1.0)
-EVAL_FRICTION = 0.15
-EVAL_SLOPE_GRADIENT = 0.2
+EVAL_FRICTION = 0.1
+EVAL_SLOPE_GRADIENT = 0.4
+EVAL_TERRAIN_SIZE = (16.0, 16.0)
 
 
 def unitree_g1_ice_env_cfg(*, play: bool = False) -> ManagerBasedRlEnvCfg:
   """Build the stock flat G1 task with lower foot friction.
 
-  Training randomizes friction for robustness. Playback fixes friction at 0.15
-  and places the robot at the bottom of an 11.3-degree slope so repeated
+  Training randomizes friction for robustness. Playback fixes friction at 0.1
+  and places the robot at the bottom of a 21.8-degree slope so repeated
   evaluations use the same ice-like uphill test.
   """
   cfg = unitree_g1_flat_env_cfg(play=play)
@@ -29,7 +30,7 @@ def unitree_g1_ice_env_cfg(*, play: bool = False) -> ManagerBasedRlEnvCfg:
     cfg.scene.terrain.terrain_type = "generator"
     cfg.scene.terrain.terrain_generator = TerrainGeneratorCfg(
       seed=42,
-      size=(8.0, 8.0),
+      size=EVAL_TERRAIN_SIZE,
       num_rows=1,
       num_cols=1,
       difficulty_range=(1.0, 1.0),
