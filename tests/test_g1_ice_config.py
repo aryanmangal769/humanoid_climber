@@ -3,7 +3,10 @@ from humanoid_climber.tasks.g1_ice import (
   EVAL_SLOPE_GRADIENT,
   EVAL_TERRAIN_SIZE,
   TRAIN_FRICTION_RANGE,
+  TRAIN_SLOPE_RANGE,
+  TRAIN_TERRAIN_SIZE,
   unitree_g1_ice_env_cfg,
+  unitree_g1_ice_ppo_runner_cfg,
 )
 from mjlab.tasks.velocity.config.g1.env_cfgs import unitree_g1_flat_env_cfg
 from mjlab.terrains import HfPyramidSlopedTerrainCfg
@@ -54,3 +57,28 @@ def test_ice_play_uses_fixed_uphill_slope() -> None:
   assert slope.slope_range == (EVAL_SLOPE_GRADIENT, EVAL_SLOPE_GRADIENT)
   assert slope.inverted
   assert slope.horizontal_scale == 0.1
+
+
+def test_ice_training_uses_slope_curriculum() -> None:
+  train = unitree_g1_ice_env_cfg()
+  assert train.scene.terrain is not None
+  assert train.scene.terrain.terrain_type == "generator"
+  assert train.scene.terrain.max_init_terrain_level == 2
+
+  generator = train.scene.terrain.terrain_generator
+  assert generator is not None
+  assert generator.curriculum
+  assert generator.size == TRAIN_TERRAIN_SIZE
+  assert generator.num_rows == 10
+  assert "terrain_levels" in train.curriculum
+
+  slope = generator.sub_terrains["ice_slope"]
+  assert isinstance(slope, HfPyramidSlopedTerrainCfg)
+  assert slope.slope_range == TRAIN_SLOPE_RANGE
+  assert slope.inverted
+
+
+def test_ice_runner_has_dedicated_experiment() -> None:
+  runner = unitree_g1_ice_ppo_runner_cfg()
+  assert runner.experiment_name == "g1_ice"
+  assert runner.max_iterations == 5_000

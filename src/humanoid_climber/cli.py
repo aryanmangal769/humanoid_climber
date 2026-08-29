@@ -10,3 +10,12 @@ def play() -> None:
   from mjlab.scripts.play import main
 
   main()
+
+
+def train() -> None:
+  """Register Humanoid Climber tasks and delegate to MjLab training."""
+  import_module("mjlab.tasks")
+  import_module("humanoid_climber.tasks")
+  from mjlab.scripts.train import main
+
+  main()

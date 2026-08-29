@@ -30,6 +30,40 @@ gradient (approximately 11.3 degrees). The 16-by-16-meter terrain provides four
 times the surface area of the earlier test. Playback uses the stock randomized
 velocity commands, including forward, lateral, and turning movement.
 
+## Fine-tune on ice
+
+Fine-tuning starts from the existing flat-walking checkpoint. Training uses a
+terrain curriculum from flat ground through a 0.2 gradient while randomizing
+foot friction from 0.1 to 1.0. The actor and critic interfaces remain identical
+to the stock G1 task.
+
+Place the pretrained checkpoint where MjLab's resume loader can find it:
+
+```bash
+mkdir -p logs/rsl_rl/g1_ice/pretrained
+cp ckpt/g1_velocity_model_final.pt logs/rsl_rl/g1_ice/pretrained/model_0.pt
+```
+
+Then launch fine-tuning on a Linux NVIDIA GPU:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-rl uv run hum-climber-train \
+  HumClimber-Velocity-Ice-Unitree-G1 \
+  --env.scene.num-envs 4096 \
+  --agent.resume True \
+  --agent.load-run pretrained \
+  --agent.load-checkpoint model_0.pt \
+  --agent.max-iterations 5000 \
+  --agent.run-name slope-0.2-friction-0.1 \
+  --agent.logger tensorboard \
+  --agent.upload-model False
+```
+
+Training outputs are written under `logs/rsl_rl/g1_ice/`. Checkpoint resume and
+one PPO iteration were smoke-tested locally on August 29, 2026. Full training
+should run on Hugging Face Jobs rather than macOS because MjLab training is
+intended for Linux with NVIDIA acceleration.
+
 ## Baseline result
 
 On August 29, 2026, the stock policy could walk sideways at low speed and made
