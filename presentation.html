@@ -1,0 +1,2010 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Hum Climber — a mixture-of-policies system for robust locomotion in changing mountain conditions.">
+  <title>Hum Climber — System Presentation</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-size: min(1vw, 1.777777vh);
+      --ink: #eef8fb;
+      --muted: #9db4bd;
+      --faint: #607982;
+      --night: #071115;
+      --ridge: #0d2026;
+      --panel: #10272d;
+      --ice: #9ee8f2;
+      --glacier: #4fc1d5;
+      --signal: #f2bc6d;
+      --safe: #82d6a8;
+      --danger: #ef8f79;
+      --line: rgba(184, 225, 233, 0.16);
+      --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+      --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #03090b;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+      font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+      color: var(--ink);
+    }
+
+    button,
+    a { font: inherit; }
+
+    .deck {
+      position: relative;
+      width: 100rem;
+      height: 56.25rem;
+      overflow: hidden;
+      isolation: isolate;
+      background:
+        radial-gradient(circle at 76% 35%, rgba(64, 162, 179, 0.13), transparent 29%),
+        linear-gradient(127deg, #071216 0%, #0a1a1f 45%, #081419 100%);
+      box-shadow: 0 2rem 8rem rgba(0, 0, 0, 0.58);
+    }
+
+    .deck::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -3;
+      opacity: 0.22;
+      background-image:
+        linear-gradient(rgba(166, 215, 224, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(166, 215, 224, 0.045) 1px, transparent 1px);
+      background-size: 4rem 4rem;
+      mask-image: linear-gradient(90deg, transparent, #000 38%, #000);
+    }
+
+    .contours {
+      position: absolute;
+      right: -5rem;
+      bottom: -6rem;
+      z-index: -2;
+      width: 67rem;
+      height: 42rem;
+      opacity: 0.42;
+      pointer-events: none;
+    }
+
+    .contours path {
+      fill: none;
+      stroke: rgba(135, 208, 220, 0.2);
+      stroke-width: 0.12;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .mountain-silhouette {
+      position: absolute;
+      inset: auto 0 0;
+      z-index: -1;
+      width: 100%;
+      height: 14rem;
+      opacity: 0.78;
+      pointer-events: none;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      grid-template-rows: 7.2rem 1fr 5.3rem;
+      padding: 0 5.6rem;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateX(2rem);
+      transition: opacity 260ms var(--ease-out), transform 320ms var(--ease-out), visibility 0s 320ms;
+    }
+
+    .slide.active {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: translateX(0);
+      transition-delay: 0s;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 1.16rem;
+      font-weight: 750;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #cfe8ed;
+    }
+
+    .brand-mark {
+      width: 2.25rem;
+      height: 2.25rem;
+      display: grid;
+      place-items: center;
+      color: var(--night);
+      background: var(--ice);
+      clip-path: polygon(50% 0, 100% 100%, 68% 82%, 50% 100%, 31% 82%, 0 100%);
+      font-size: 0.86rem;
+      font-weight: 900;
+    }
+
+    .section-label {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 1.02rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .section-label::before {
+      content: "";
+      width: 2.8rem;
+      height: 1px;
+      background: var(--glacier);
+    }
+
+    .content {
+      display: grid;
+      grid-template-columns: 46rem 1fr;
+      gap: 2.8rem;
+      align-items: center;
+    }
+
+    .copy {
+      align-self: center;
+      padding-top: 0.6rem;
+    }
+
+    .eyebrow {
+      margin: 0 0 1.3rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 1.26rem;
+      font-weight: 760;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--signal);
+    }
+
+    h1 {
+      max-width: 46rem;
+      margin: 0;
+      font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+      font-size: 3.85rem;
+      font-weight: 700;
+      line-height: 1.06;
+      letter-spacing: -0.035em;
+      text-wrap: balance;
+    }
+
+    h1 em {
+      font-weight: 700;
+      font-style: normal;
+      color: var(--ice);
+    }
+
+    .problem {
+      max-width: 41rem;
+      margin: 1.8rem 0 0;
+      font-size: 1.65rem;
+      line-height: 1.42;
+      color: #c7d8dc;
+    }
+
+    .problem strong {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .challenge-points {
+      display: grid;
+      gap: 0.9rem;
+      max-width: 42rem;
+      margin: 2rem 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .challenge-points li {
+      position: relative;
+      padding-left: 1.45rem;
+      font-size: 1.78rem;
+      line-height: 1.42;
+      color: #c5d5d9;
+    }
+
+    .challenge-points li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.62em;
+      width: 0.48rem;
+      height: 0.48rem;
+      border-radius: 50%;
+      background: var(--signal);
+      box-shadow: 0 0 0.7rem rgba(242, 188, 109, 0.45);
+    }
+
+    .variables {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      margin: 1.55rem 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .variables li {
+      display: flex;
+      align-items: center;
+      gap: 0.46rem;
+      padding: 0.5rem 0.74rem;
+      border: 1px solid rgba(170, 218, 227, 0.17);
+      border-radius: 999px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.67rem;
+      letter-spacing: 0.05em;
+      color: #b6cbd1;
+      background: rgba(173, 224, 233, 0.045);
+    }
+
+    .variables li::before {
+      content: "";
+      width: 0.38rem;
+      height: 0.38rem;
+      border-radius: 50%;
+      background: var(--signal);
+      box-shadow: 0 0 0.7rem rgba(242, 188, 109, 0.6);
+    }
+
+    .thesis {
+      position: relative;
+      margin-top: 2.15rem;
+      padding: 1.12rem 0 0 1.15rem;
+      border-top: 1px solid var(--line);
+    }
+
+    .thesis::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 1.2rem;
+      width: 0.23rem;
+      height: 2.9rem;
+      border-radius: 99px;
+      background: var(--glacier);
+      box-shadow: 0 0 1.2rem rgba(79, 193, 213, 0.35);
+    }
+
+    .thesis-label {
+      margin: 0 0 0.35rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.64rem;
+      font-weight: 780;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--glacier);
+    }
+
+    .thesis p:last-child {
+      margin: 0;
+      max-width: 34rem;
+      font-size: 1.16rem;
+      line-height: 1.38;
+      color: #e1eff2;
+    }
+
+    .terrain-figure {
+      position: relative;
+      width: 43rem;
+      height: 39.5rem;
+      justify-self: end;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    .terrain-figure::before {
+      content: "";
+      position: absolute;
+      left: 2rem;
+      right: 1rem;
+      bottom: 2.4rem;
+      height: 19rem;
+      border-radius: 50%;
+      background: radial-gradient(ellipse, rgba(66, 177, 196, 0.12), transparent 68%);
+      filter: blur(1rem);
+    }
+
+    .terrain-map {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+
+    .terrain-map .ridge-back {
+      fill: #10292f;
+      stroke: rgba(140, 207, 219, 0.12);
+      stroke-width: 0.12rem;
+    }
+
+    .terrain-map .ridge-front {
+      fill: #16343a;
+      stroke: rgba(158, 232, 242, 0.22);
+      stroke-width: 0.12rem;
+    }
+
+    .terrain-map .snow {
+      fill: rgba(197, 238, 244, 0.76);
+    }
+
+    .terrain-map .route {
+      fill: none;
+      stroke: var(--signal);
+      stroke-width: 0.2rem;
+      stroke-linecap: round;
+      stroke-dasharray: 0.45rem 0.65rem;
+      filter: drop-shadow(0 0 0.45rem rgba(242, 188, 109, 0.5));
+      animation: route-flow 2.8s linear infinite;
+    }
+
+    .terrain-map .weather {
+      fill: none;
+      stroke: rgba(158, 232, 242, 0.42);
+      stroke-width: 0.13rem;
+      stroke-linecap: round;
+    }
+
+    .terrain-map .probe-ring {
+      fill: rgba(7, 17, 21, 0.9);
+      stroke: var(--ice);
+      stroke-width: 0.13rem;
+    }
+
+    .terrain-map .probe-core {
+      fill: var(--ice);
+      filter: drop-shadow(0 0 0.55rem rgba(158, 232, 242, 0.75));
+    }
+
+    .condition {
+      position: absolute;
+      display: flex;
+      align-items: center;
+      gap: 0.62rem;
+      min-width: 10.2rem;
+      padding: 0.88rem 1.05rem;
+      border: 1px solid rgba(158, 232, 242, 0.2);
+      border-radius: 0.62rem;
+      font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+      letter-spacing: 0.01em;
+      color: #e4f1f3;
+      background: rgba(7, 22, 27, 0.86);
+      box-shadow: 0 0.8rem 1.8rem rgba(0, 0, 0, 0.22);
+      transform-origin: center;
+      animation: condition-change 7.5s var(--ease-in-out) infinite;
+    }
+
+    .condition::before {
+      content: "";
+      width: 0.42rem;
+      height: 0.42rem;
+      border-radius: 50%;
+      background: var(--signal);
+      box-shadow: 0 0 0.7rem rgba(242, 188, 109, 0.62);
+    }
+
+    .condition-copy {
+      display: grid;
+      gap: 0.12rem;
+    }
+
+    .condition strong {
+      font-size: 1.56rem;
+      line-height: 1;
+    }
+
+    .condition small {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.92rem;
+      font-weight: 650;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .condition-terrain { left: 1.2rem; bottom: 7.1rem; }
+    .condition-grip { left: 8.1rem; bottom: 14.3rem; }
+    .condition-grade { left: 17.2rem; top: 11.1rem; }
+    .condition-wind { right: 4.5rem; top: 8.1rem; }
+    .condition-balance { right: 0.7rem; bottom: 10.8rem; }
+
+    .condition-grip { animation-delay: -6s; }
+    .condition-grade { animation-delay: -4.5s; }
+    .condition-wind { animation-delay: -3s; }
+    .condition-balance { animation-delay: -1.5s; }
+
+    .system-figure {
+      display: none;
+      position: relative;
+      width: 42.5rem;
+      height: 39.5rem;
+      justify-self: end;
+      border: 1px solid rgba(166, 218, 228, 0.16);
+      border-radius: 1.25rem;
+      background:
+        radial-gradient(circle at 50% 52%, rgba(69, 191, 212, 0.11), transparent 31%),
+        linear-gradient(155deg, rgba(16, 39, 45, 0.84), rgba(8, 23, 28, 0.9));
+      box-shadow:
+        0 1.8rem 4.8rem rgba(0, 0, 0, 0.28),
+        inset 0 1px rgba(255, 255, 255, 0.04);
+      overflow: hidden;
+    }
+
+    .system-figure::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      opacity: 0.3;
+      background-image: radial-gradient(rgba(162, 218, 228, 0.24) 0.06rem, transparent 0.07rem);
+      background-size: 1.4rem 1.4rem;
+      mask-image: radial-gradient(circle at 50% 54%, #000, transparent 72%);
+    }
+
+    .figure-head {
+      position: absolute;
+      inset: 1.45rem 1.55rem auto;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .figure-kicker {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.6rem;
+      font-weight: 760;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .live {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.56rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      color: var(--safe);
+    }
+
+    .live::before {
+      content: "";
+      width: 0.42rem;
+      height: 0.42rem;
+      border-radius: 50%;
+      background: var(--safe);
+      box-shadow: 0 0 0.7rem rgba(130, 214, 168, 0.75);
+      animation: breathe 2.2s var(--ease-in-out) infinite;
+    }
+
+    .sensor-rail {
+      position: absolute;
+      top: 4.6rem;
+      left: 2rem;
+      right: 2rem;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 0.48rem;
+    }
+
+    .sensor {
+      padding: 0.6rem 0.2rem 0.55rem;
+      border: 1px solid rgba(169, 217, 226, 0.13);
+      border-radius: 0.55rem;
+      text-align: center;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.54rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #a9bec5;
+      background: rgba(171, 222, 232, 0.035);
+    }
+
+    .sensor b {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-size: 0.47rem;
+      font-weight: 650;
+      color: var(--faint);
+    }
+
+    .signal-paths {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .signal-paths path {
+      fill: none;
+      stroke: rgba(138, 208, 220, 0.22);
+      stroke-width: 0.11;
+      stroke-dasharray: 0.35 0.46;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .signal-paths .active-route {
+      stroke: var(--glacier);
+      stroke-width: 0.16;
+      stroke-dasharray: 0.5 0.7;
+      animation: route-flow 2.4s linear infinite;
+    }
+
+    .orchestrator {
+      position: absolute;
+      left: 50%;
+      top: 52%;
+      z-index: 4;
+      width: 12rem;
+      height: 12rem;
+      display: grid;
+      place-content: center;
+      text-align: center;
+      border: 1px solid rgba(158, 232, 242, 0.42);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 40% 32%, rgba(158, 232, 242, 0.22), transparent 30%),
+        linear-gradient(145deg, #153d46, #0a2229);
+      box-shadow:
+        0 0 0 0.65rem rgba(80, 185, 204, 0.055),
+        0 0 0 1.25rem rgba(80, 185, 204, 0.025),
+        0 1.4rem 3rem rgba(0, 0, 0, 0.38),
+        inset 0 1px rgba(255, 255, 255, 0.09);
+      transform: translate(-50%, -50%);
+    }
+
+    .orchestrator::before {
+      content: "";
+      position: absolute;
+      inset: -0.75rem;
+      border: 1px dashed rgba(158, 232, 242, 0.2);
+      border-radius: 50%;
+      animation: orbit 18s linear infinite;
+    }
+
+    .mountain-mark {
+      position: relative;
+      width: 3.15rem;
+      height: 2rem;
+      margin: 0 auto 0.7rem;
+    }
+
+    .mountain-mark::before,
+    .mountain-mark::after {
+      content: "";
+      position: absolute;
+      bottom: 0;
+      background: var(--ice);
+      clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    }
+
+    .mountain-mark::before {
+      left: 0;
+      width: 2.25rem;
+      height: 1.85rem;
+    }
+
+    .mountain-mark::after {
+      right: 0;
+      width: 1.7rem;
+      height: 1.35rem;
+      opacity: 0.62;
+    }
+
+    .orchestrator-name {
+      font-size: 1.02rem;
+      font-weight: 780;
+      letter-spacing: 0.02em;
+    }
+
+    .orchestrator-role {
+      margin-top: 0.3rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.48rem;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+      color: var(--glacier);
+    }
+
+    .policy {
+      position: absolute;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      gap: 0.54rem;
+      min-width: 8.3rem;
+      padding: 0.63rem 0.72rem;
+      border: 1px solid rgba(168, 218, 227, 0.15);
+      border-radius: 0.65rem;
+      background: rgba(8, 25, 30, 0.92);
+      box-shadow: 0 0.8rem 1.7rem rgba(0, 0, 0, 0.18);
+      animation: policy-cycle 10s var(--ease-in-out) infinite;
+    }
+
+    .policy:nth-of-type(2) { animation-delay: -8s; }
+    .policy:nth-of-type(3) { animation-delay: -6s; }
+    .policy:nth-of-type(4) { animation-delay: -4s; }
+    .policy:nth-of-type(5) { animation-delay: -2s; }
+
+    .policy-dot {
+      flex: 0 0 auto;
+      width: 0.55rem;
+      height: 0.55rem;
+      border-radius: 50%;
+      background: var(--faint);
+      box-shadow: 0 0 0.6rem transparent;
+    }
+
+    .policy-copy b {
+      display: block;
+      font-size: 0.61rem;
+      font-weight: 720;
+      color: #d9e9ed;
+    }
+
+    .policy-copy small {
+      display: block;
+      margin-top: 0.17rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.43rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--faint);
+    }
+
+    .policy-flat { left: 2.2rem; top: 11.1rem; }
+    .policy-ice { right: 2.1rem; top: 10.4rem; }
+    .policy-wind { right: 1.45rem; top: 21.7rem; }
+    .policy-rough { right: 4.2rem; bottom: 3.1rem; }
+    .policy-recovery { left: 2rem; bottom: 3.1rem; }
+
+    .training-loop {
+      position: absolute;
+      left: 2rem;
+      top: 20.25rem;
+      z-index: 3;
+      width: 9.4rem;
+      padding: 0.7rem 0.7rem 0.64rem;
+      border: 1px dashed rgba(242, 188, 109, 0.4);
+      border-radius: 0.7rem;
+      background: rgba(48, 38, 22, 0.33);
+    }
+
+    .training-loop b {
+      display: block;
+      font-size: 0.58rem;
+      font-weight: 720;
+      color: #f5d6a2;
+    }
+
+    .training-loop span {
+      display: block;
+      margin-top: 0.26rem;
+      font-size: 0.48rem;
+      line-height: 1.35;
+      color: #ad9d80;
+    }
+
+    .training-loop::after {
+      content: "↗";
+      position: absolute;
+      right: 0.55rem;
+      top: 0.45rem;
+      color: var(--signal);
+      font-size: 0.7rem;
+    }
+
+    .figure-caption {
+      position: absolute;
+      left: 50%;
+      bottom: 0.9rem;
+      z-index: 5;
+      transform: translateX(-50%);
+      white-space: nowrap;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.49rem;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: var(--faint);
+    }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 1px solid var(--line);
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      color: var(--faint);
+    }
+
+    .footer-title {
+      color: #a9c0c7;
+      text-transform: uppercase;
+    }
+
+    .slide-index {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+    }
+
+    .slide-index strong {
+      color: var(--ice);
+      font-size: 0.88rem;
+    }
+
+    .slide-index::before {
+      content: "";
+      width: 3.2rem;
+      height: 1px;
+      background: linear-gradient(90deg, var(--glacier), rgba(79, 193, 213, 0.12));
+    }
+
+    .policy-story {
+      position: relative;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .story-heading {
+      position: absolute;
+      inset: 1.65rem 0 auto;
+      z-index: 5;
+      text-align: center;
+    }
+
+    .story-heading h2 {
+      margin: 0;
+      font-size: 3.15rem;
+      line-height: 1.04;
+      letter-spacing: -0.035em;
+    }
+
+    .story-heading p {
+      margin: 0.62rem 0 0;
+      font-size: 1.45rem;
+      color: #bdd0d5;
+    }
+
+    .slide-2.active .story-heading {
+      animation: hide-story-heading 15s var(--ease-in-out) forwards;
+    }
+
+    .success-scene {
+      position: absolute;
+      inset: 8.4rem 0 0;
+      transform-origin: 50% 0;
+    }
+
+    .slide-2.active .success-scene {
+      animation: minimize-success 15s var(--ease-in-out) forwards;
+    }
+
+    .video-grid {
+      display: grid;
+      gap: 1.15rem;
+    }
+
+    .success-grid {
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    .video-card {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid rgba(158, 232, 242, 0.21);
+      border-radius: 0.85rem;
+      background: #071519;
+      box-shadow: 0 1.2rem 2.8rem rgba(0, 0, 0, 0.28);
+    }
+
+    .success-grid .video-card {
+      opacity: 0;
+      transform: translateY(1.25rem) scale(0.97);
+    }
+
+    .slide-2.active .success-grid .video-card {
+      animation: reveal-card 700ms var(--ease-out) forwards;
+    }
+
+    .slide-2.active .success-grid .video-card:nth-child(1) { animation-delay: 1.1s; }
+    .slide-2.active .success-grid .video-card:nth-child(2) { animation-delay: 1.45s; }
+    .slide-2.active .success-grid .video-card:nth-child(3) { animation-delay: 1.8s; }
+
+    .video-frame {
+      position: relative;
+      height: 20.5rem;
+      overflow: hidden;
+      background: #061014;
+    }
+
+    .video-frame video {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+      object-position: center;
+    }
+
+    .video-frame::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+    }
+
+    .video-caption {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.8rem;
+      min-height: 4.3rem;
+      padding: 0.82rem 1rem;
+    }
+
+    .video-caption strong {
+      font-size: 1.15rem;
+      line-height: 1.15;
+    }
+
+    .status-badge {
+      flex: 0 0 auto;
+      padding: 0.3rem 0.52rem;
+      border-radius: 999px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.57rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .status-good {
+      border: 1px solid rgba(130, 214, 168, 0.35);
+      color: var(--safe);
+      background: rgba(130, 214, 168, 0.08);
+    }
+
+    .status-fail {
+      border: 1px solid rgba(239, 143, 121, 0.42);
+      color: #ffab97;
+      background: rgba(239, 143, 121, 0.1);
+    }
+
+    .failure-scene {
+      position: absolute;
+      inset: 1.7rem 6rem 0;
+      z-index: 4;
+      opacity: 0;
+      transform: translateY(1.5rem);
+      pointer-events: none;
+    }
+
+    .slide-2.active .failure-scene {
+      animation: reveal-failure 15s var(--ease-out) forwards;
+    }
+
+    body.preview-failure .slide-2 .story-heading {
+      opacity: 0;
+      animation: none;
+    }
+
+    body.preview-failure .slide-2 .success-scene {
+      opacity: 0;
+      transform: translateY(-5.8rem) scale(0.72);
+      filter: saturate(0.45);
+      animation: none;
+    }
+
+    body.preview-failure .slide-2 .success-grid .video-card {
+      opacity: 1;
+      transform: none;
+      animation: none;
+    }
+
+    body.preview-failure .slide-2 .failure-scene {
+      opacity: 1;
+      transform: none;
+      animation: none;
+    }
+
+    .failure-heading {
+      margin: 0 0 1.1rem;
+      text-align: center;
+      font-size: 2.5rem;
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+
+    .failure-heading em {
+      color: var(--danger);
+      font-style: normal;
+    }
+
+    .failure-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      max-width: 66rem;
+      margin: 0 auto;
+    }
+
+    .failure-grid .video-card {
+      border-color: rgba(239, 143, 121, 0.24);
+    }
+
+    .failure-grid .video-frame {
+      height: 21rem;
+    }
+
+    .replay-hint {
+      position: absolute;
+      left: 50%;
+      bottom: 1.1rem;
+      transform: translateX(-50%);
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.68rem;
+      letter-spacing: 0.08em;
+      color: var(--faint);
+    }
+
+    .os-story {
+      position: relative;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .os-heading {
+      position: absolute;
+      inset: 1.6rem 0 auto;
+      z-index: 10;
+      text-align: center;
+    }
+
+    .os-heading h2 {
+      margin: 0;
+      font-size: 3.1rem;
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+    }
+
+    .os-heading h2 span { color: var(--ice); }
+
+    .os-heading p {
+      margin: 0.55rem 0 0;
+      font-size: 1.35rem;
+      color: #b9cdd2;
+    }
+
+    .policy-bank {
+      position: absolute;
+      top: 8.1rem;
+      left: 0;
+      right: 0;
+      z-index: 5;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 0.72rem;
+    }
+
+    .bank-policy {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid rgba(158, 232, 242, 0.18);
+      border-radius: 0.65rem;
+      background: rgba(7, 22, 27, 0.93);
+      box-shadow: 0 0.8rem 1.8rem rgba(0, 0, 0, 0.22);
+      opacity: 0;
+      transform: translateY(1rem) scale(0.96);
+    }
+
+    .slide-3.active .bank-policy {
+      animation: collect-policy 26s var(--ease-in-out) forwards;
+    }
+
+    .slide-3.active .bank-policy:nth-child(1) { --collect-x: 35.8rem; animation-delay: 0.25s; }
+    .slide-3.active .bank-policy:nth-child(2) { --collect-x: 17.9rem; animation-delay: 0.5s; }
+    .slide-3.active .bank-policy:nth-child(3) { --collect-x: 0rem; animation-delay: 0.75s; }
+    .slide-3.active .bank-policy:nth-child(4) { --collect-x: -17.9rem; animation-delay: 1s; }
+    .slide-3.active .bank-policy:nth-child(5) { --collect-x: -35.8rem; animation-delay: 1.25s; }
+
+    .bank-media {
+      position: relative;
+      height: 8.3rem;
+      overflow: hidden;
+      background: #061014;
+    }
+
+    .bank-media video {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+    }
+
+    .placeholder-media {
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(79, 193, 213, 0.18), transparent 47%),
+        linear-gradient(145deg, #102a31, #07161b);
+    }
+
+    .placeholder-icon {
+      position: relative;
+      width: 3.8rem;
+      height: 3.8rem;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(158, 232, 242, 0.34);
+      border-radius: 50%;
+      font-size: 1.75rem;
+      color: var(--ice);
+      box-shadow: 0 0 1.5rem rgba(79, 193, 213, 0.13);
+    }
+
+    .bank-label {
+      min-height: 3.2rem;
+      display: grid;
+      place-items: center;
+      padding: 0.55rem 0.45rem;
+      text-align: center;
+      font-size: 0.9rem;
+      font-weight: 720;
+      line-height: 1.1;
+    }
+
+    .summit-core {
+      position: absolute;
+      left: 50%;
+      top: 13.7rem;
+      z-index: 7;
+      width: 24rem;
+      height: 12.4rem;
+      display: grid;
+      place-content: center;
+      text-align: center;
+      border: 1px solid rgba(158, 232, 242, 0.5);
+      border-radius: 1.15rem;
+      background:
+        radial-gradient(circle at 50% 0%, rgba(158, 232, 242, 0.19), transparent 47%),
+        linear-gradient(145deg, #173c45, #0b252c);
+      box-shadow: 0 0 0 0.6rem rgba(79, 193, 213, 0.045), 0 1.5rem 3rem rgba(0, 0, 0, 0.35);
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.86);
+    }
+
+    .slide-3.active .summit-core {
+      animation: reveal-core 26s var(--ease-out) forwards;
+    }
+
+    .core-mark {
+      width: 2.8rem;
+      height: 2.8rem;
+      display: grid;
+      place-items: center;
+      margin: 0 auto 0.6rem;
+      color: var(--night);
+      background: var(--ice);
+      clip-path: polygon(50% 0, 100% 100%, 68% 82%, 50% 100%, 31% 82%, 0 100%);
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.9rem;
+      font-weight: 900;
+    }
+
+    .core-name {
+      font-size: 1.72rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .core-role {
+      margin-top: 0.38rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.6rem;
+      font-weight: 730;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--glacier);
+    }
+
+    .core-policy-strip {
+      width: 19.5rem;
+      height: 2.7rem;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 0.3rem;
+      margin: 0.7rem auto 0;
+      opacity: 0;
+    }
+
+    .slide-3.active .core-policy-strip { animation: reveal-core-policies 26s var(--ease-out) forwards; }
+
+    .core-policy-thumb {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid rgba(158, 232, 242, 0.35);
+      border-radius: 0.3rem;
+      background: #061014;
+    }
+
+    .core-policy-thumb video {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+    }
+
+    .core-policy-thumb.placeholder-media .placeholder-icon {
+      width: 1.7rem;
+      height: 1.7rem;
+      font-size: 0.8rem;
+    }
+
+    .runtime-flow,
+    .learning-flow {
+      position: absolute;
+      inset: 7.6rem 0 0;
+      z-index: 6;
+      pointer-events: none;
+    }
+
+    .runtime-flow { opacity: 0; }
+    .learning-flow { opacity: 1; }
+
+    .slide-3.active .runtime-flow { animation: runtime-stage 26s var(--ease-in-out) forwards; }
+
+    .flow-node {
+      position: absolute;
+      z-index: 2;
+      min-width: 12rem;
+      padding: 0.82rem 1rem;
+      border: 1px solid rgba(158, 232, 242, 0.22);
+      border-radius: 0.72rem;
+      background: rgba(8, 25, 30, 0.94);
+      box-shadow: 0 0.9rem 2rem rgba(0, 0, 0, 0.24);
+    }
+
+    .flow-node b {
+      display: block;
+      font-size: 1rem;
+      line-height: 1.1;
+    }
+
+    .flow-node small {
+      display: block;
+      margin-top: 0.28rem;
+      font-size: 0.68rem;
+      line-height: 1.25;
+      color: var(--muted);
+    }
+
+    .input-api { left: 3rem; top: 6rem; }
+    .input-sensor { left: 3rem; top: 14rem; }
+    .policy-output { right: 3rem; top: 10rem; border-color: rgba(130, 214, 168, 0.34); }
+
+    .flow-lines {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+
+    .flow-lines > path {
+      fill: none;
+      stroke: rgba(158, 232, 242, 0.4);
+      stroke-width: 0.16rem;
+      stroke-linecap: round;
+      stroke-dasharray: 0.45rem 0.55rem;
+      animation: route-flow 1.35s linear infinite;
+    }
+
+    .flow-lines .return-path { stroke: var(--safe); }
+    .flow-lines .request-path { stroke: var(--signal); }
+    .flow-lines .training-path { stroke: var(--signal); }
+    .flow-lines .policy-path { stroke: var(--safe); }
+
+    .unknown-state {
+      position: absolute;
+      left: 62%;
+      top: 3.3rem;
+      min-width: 12rem;
+      padding: 0.55rem 0.75rem;
+      text-align: center;
+      border-color: rgba(242, 188, 109, 0.45);
+      background: rgba(48, 37, 20, 0.82);
+    }
+
+    .unknown-state b { color: #ffd99f; }
+
+    .server-node {
+      position: absolute;
+      right: 1rem;
+      top: 7.8rem;
+      width: 15rem;
+      min-height: 4.4rem;
+      display: grid;
+      place-content: center;
+      text-align: center;
+      border: 1px solid rgba(158, 232, 242, 0.32);
+      border-radius: 0.72rem;
+      background: linear-gradient(145deg, rgba(18, 47, 55, 0.97), rgba(7, 24, 29, 0.97));
+      box-shadow: 0 1.2rem 2.8rem rgba(0, 0, 0, 0.3);
+    }
+
+    .server-icon {
+      display: inline;
+      margin-right: 0.35rem;
+      font-size: 1.1rem;
+      color: var(--ice);
+    }
+
+    .server-node b { display: inline; font-size: 1rem; }
+    .server-node small { max-width: 12rem; margin: 0.3rem auto 0; }
+
+    .training-node {
+      left: 50%;
+      top: 18rem;
+      margin-left: -9rem;
+      width: 18rem;
+      min-height: 7rem;
+      display: grid;
+      place-content: center;
+      text-align: center;
+      border-color: rgba(242, 188, 109, 0.42);
+      background: linear-gradient(145deg, rgba(50, 37, 19, 0.96), rgba(25, 27, 22, 0.96));
+    }
+
+    .training-node b { color: #ffd99f; }
+
+    .training-sim-grid {
+      position: absolute;
+      left: 50%;
+      z-index: 2;
+      top: 18rem;
+      width: 32rem;
+      height: 7rem;
+      margin-left: -16rem;
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+      gap: 0.24rem;
+      padding: 0.35rem;
+      border: 1px solid rgba(242, 188, 109, 0.42);
+      border-radius: 0.65rem;
+      background: rgba(11, 24, 27, 0.96);
+      box-shadow: 0 1rem 2rem rgba(0, 0, 0, 0.28);
+      opacity: 0;
+      transform-origin: center;
+    }
+
+    .training-sim-grid video {
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      display: block;
+      object-fit: cover;
+      border-radius: 0.18rem;
+      filter: saturate(0.8) contrast(1.08);
+    }
+
+    .training-sim-grid video:nth-child(3n+2) { object-position: 58% 50%; }
+    .training-sim-grid video:nth-child(3n) { object-position: 42% 50%; }
+
+    .request-label,
+    .return-label {
+      position: absolute;
+      z-index: 3;
+      padding: 0.3rem 0.5rem;
+      border-radius: 0.35rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.62rem;
+      font-weight: 760;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: #0a1c21;
+    }
+
+    .request-label { right: 16rem; top: 5.6rem; color: var(--signal); }
+    .return-label { left: 17rem; top: 5.6rem; color: var(--safe); }
+
+    .new-policy {
+      position: absolute;
+      left: 1rem;
+      top: 7.8rem;
+      min-width: 15rem;
+      min-height: 4.4rem;
+      display: grid;
+      place-content: center;
+      text-align: center;
+      border-color: rgba(130, 214, 168, 0.38);
+      background: rgba(18, 48, 39, 0.88);
+    }
+
+    .new-policy b { color: #b1f0cc; }
+
+    .learning-flow .unknown-state,
+    .learning-flow .request-label,
+    .learning-flow .server-node,
+    .learning-flow .training-sim-grid,
+    .learning-flow .training-node,
+    .learning-flow .return-label,
+    .learning-flow .new-policy,
+    .learning-flow .request-path,
+    .learning-flow .training-path,
+    .learning-flow .policy-path,
+    .learning-flow .return-path {
+      opacity: 0;
+    }
+
+    .slide-3.active .learning-flow .unknown-state { animation: learn-unknown 26s var(--ease-out) forwards; }
+    .slide-3.active .learning-flow .request-label,
+    .slide-3.active .learning-flow .request-path {
+      animation: learn-request 26s var(--ease-out) forwards, route-flow 1.35s linear infinite;
+    }
+    .slide-3.active .learning-flow .server-node { animation: learn-server 26s var(--ease-out) forwards; }
+    .slide-3.active .learning-flow .training-sim-grid { animation: learn-sim-grid 26s var(--ease-in-out) forwards; }
+    .slide-3.active .learning-flow .training-path {
+      animation: learn-training-route 26s var(--ease-out) forwards, route-flow 1.35s linear infinite;
+    }
+    .slide-3.active .learning-flow .training-node {
+      animation: learn-training 26s var(--ease-out) forwards;
+    }
+    .slide-3.active .learning-flow .new-policy { animation: learn-new-policy 26s var(--ease-out) forwards; }
+    .slide-3.active .learning-flow .policy-path { animation: learn-policy-route 26s var(--ease-out) forwards, route-flow 1.35s linear infinite; }
+    .slide-3.active .learning-flow .return-label,
+    .slide-3.active .learning-flow .return-path {
+      animation: learn-return 26s var(--ease-out) forwards, route-flow 1.35s linear infinite;
+    }
+
+    body.preview-bank .slide-3 .bank-policy {
+      opacity: 1;
+      transform: none;
+      animation: none;
+    }
+
+    body.preview-bank .slide-3 .summit-core,
+    body.preview-bank .slide-3 .runtime-flow,
+    body.preview-bank .slide-3 .learning-flow { opacity: 0; animation: none; }
+
+    body.preview-runtime .slide-3 .policy-bank,
+    body.preview-runtime .slide-3 .learning-flow { opacity: 0; }
+
+    body.preview-runtime .slide-3 .bank-policy,
+    body.preview-runtime .slide-3 .policy-bank,
+    body.preview-runtime .slide-3 .runtime-flow,
+    body.preview-runtime .slide-3 .summit-core {
+      animation: none;
+    }
+
+    body.preview-runtime .slide-3 .summit-core {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+
+    body.preview-runtime .slide-3 .runtime-flow {
+      opacity: 1;
+      transform: none;
+    }
+
+    body.preview-runtime .slide-3 .core-policy-strip { opacity: 1; animation: none; }
+
+    body.preview-learning .slide-3 .policy-bank,
+    body.preview-learning .slide-3 .runtime-flow { opacity: 0; }
+
+    body.preview-learning .slide-3 .bank-policy,
+    body.preview-learning .slide-3 .policy-bank,
+    body.preview-learning .slide-3 .runtime-flow,
+    body.preview-learning .slide-3 .learning-flow,
+    body.preview-learning .slide-3 .summit-core {
+      animation: none;
+    }
+
+    body.preview-learning .slide-3 .summit-core {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(0.72);
+    }
+
+    body.preview-learning .slide-3 .core-policy-strip { opacity: 1; animation: none; }
+
+    body.preview-learning .slide-3 .learning-flow { opacity: 1; }
+
+    body.preview-learning .slide-3 .learning-flow .unknown-state,
+    body.preview-learning .slide-3 .learning-flow .request-label,
+    body.preview-learning .slide-3 .learning-flow .server-node,
+    body.preview-learning .slide-3 .learning-flow .training-sim-grid,
+    body.preview-learning .slide-3 .learning-flow .training-node,
+    body.preview-learning .slide-3 .learning-flow .return-label,
+    body.preview-learning .slide-3 .learning-flow .new-policy,
+    body.preview-learning .slide-3 .learning-flow .request-path,
+    body.preview-learning .slide-3 .learning-flow .training-path,
+    body.preview-learning .slide-3 .learning-flow .policy-path,
+    body.preview-learning .slide-3 .learning-flow .return-path {
+      opacity: 1;
+      animation: none;
+    }
+
+    body.preview-learning .slide-3 .learning-flow .training-sim-grid { opacity: 0; }
+
+    body.preview-simulation .slide-3 .policy-bank,
+    body.preview-simulation .slide-3 .runtime-flow { opacity: 0; }
+
+    body.preview-simulation .slide-3 .bank-policy,
+    body.preview-simulation .slide-3 .policy-bank,
+    body.preview-simulation .slide-3 .runtime-flow,
+    body.preview-simulation .slide-3 .learning-flow,
+    body.preview-simulation .slide-3 .summit-core,
+    body.preview-simulation .slide-3 .core-policy-strip,
+    body.preview-simulation .slide-3 .learning-flow * { animation: none; }
+
+    body.preview-simulation .slide-3 .summit-core {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(0.72);
+    }
+
+    body.preview-simulation .slide-3 .core-policy-strip,
+    body.preview-simulation .slide-3 .learning-flow,
+    body.preview-simulation .slide-3 .learning-flow .unknown-state,
+    body.preview-simulation .slide-3 .learning-flow .request-label,
+    body.preview-simulation .slide-3 .learning-flow .server-node,
+    body.preview-simulation .slide-3 .learning-flow .request-path,
+    body.preview-simulation .slide-3 .learning-flow .training-path,
+    body.preview-simulation .slide-3 .learning-flow .training-sim-grid { opacity: 1 !important; }
+
+    body.preview-simulation .slide-3 .learning-flow .training-node,
+    body.preview-simulation .slide-3 .learning-flow .new-policy,
+    body.preview-simulation .slide-3 .learning-flow .policy-path,
+    body.preview-simulation .slide-3 .learning-flow .return-label,
+    body.preview-simulation .slide-3 .learning-flow .return-path { opacity: 0 !important; }
+
+    @keyframes breathe {
+      0%, 100% { opacity: 0.62; transform: scale(0.92); }
+      50% { opacity: 1; transform: scale(1); }
+    }
+
+    @keyframes route-flow {
+      to { stroke-dashoffset: -3.6; }
+    }
+
+    @keyframes orbit {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes policy-cycle {
+      0%, 15% {
+        border-color: rgba(158, 232, 242, 0.62);
+        background: rgba(20, 58, 66, 0.96);
+        transform: translateY(-0.12rem);
+        box-shadow: 0 0.8rem 2rem rgba(45, 159, 179, 0.2);
+      }
+      20%, 100% {
+        border-color: rgba(168, 218, 227, 0.15);
+        background: rgba(8, 25, 30, 0.92);
+        transform: translateY(0);
+        box-shadow: 0 0.8rem 1.7rem rgba(0, 0, 0, 0.18);
+      }
+    }
+
+    @keyframes condition-change {
+      0%, 15% {
+        border-color: rgba(158, 232, 242, 0.76);
+        background: rgba(20, 59, 68, 0.96);
+        box-shadow: 0 0 0 0.32rem rgba(79, 193, 213, 0.09), 0 1rem 2.2rem rgba(16, 112, 129, 0.28);
+        transform: scale(1.09) translateY(-0.12rem);
+      }
+      21%, 100% {
+        border-color: rgba(158, 232, 242, 0.2);
+        background: rgba(7, 22, 27, 0.86);
+        box-shadow: 0 0.8rem 1.8rem rgba(0, 0, 0, 0.22);
+        transform: scale(1) translateY(0);
+      }
+    }
+
+    @keyframes reveal-card {
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes hide-story-heading {
+      0%, 52% { opacity: 1; transform: translateY(0); }
+      62%, 100% { opacity: 0; transform: translateY(-1rem); }
+    }
+
+    @keyframes minimize-success {
+      0%, 52% { opacity: 1; transform: translateY(0) scale(1); filter: none; }
+      63%, 100% { opacity: 0; transform: translateY(-5.8rem) scale(0.72); filter: saturate(0.45); }
+    }
+
+    @keyframes reveal-failure {
+      0%, 60% { opacity: 0; transform: translateY(1.5rem); }
+      69%, 100% { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes collect-policy {
+      0%, 5% { opacity: 0; transform: translateY(1rem) scale(0.96); }
+      11%, 30% { opacity: 1; transform: translateY(0) scale(1); }
+      40%, 100% { opacity: 0; transform: translate(var(--collect-x), 5.7rem) scale(0.22); }
+    }
+
+    @keyframes reveal-core {
+      0%, 34% { opacity: 0; transform: translate(-50%, -50%) scale(0.86); }
+      43%, 64% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+      72%, 100% { opacity: 1; transform: translate(-50%, -50%) scale(0.72); }
+    }
+
+    @keyframes reveal-core-policies {
+      0%, 39% { opacity: 0; transform: translateY(0.45rem); }
+      45%, 100% { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes runtime-stage {
+      0%, 39% { opacity: 0; transform: translateY(0.8rem); }
+      46%, 65% { opacity: 1; transform: translateY(0); }
+      72%, 100% { opacity: 0; transform: translateY(-0.6rem); }
+    }
+
+    @keyframes learn-unknown {
+      0%, 61% { opacity: 0; transform: translateY(0.7rem); }
+      67%, 100% { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes learn-request {
+      0%, 66% { opacity: 0; }
+      72%, 100% { opacity: 1; }
+    }
+
+    @keyframes learn-server {
+      0%, 70% { opacity: 0; transform: translateX(0.8rem); }
+      76%, 100% { opacity: 1; transform: translateX(0); }
+    }
+
+    @keyframes learn-sim-grid {
+      0%, 74% { opacity: 0; transform: scale(0.92); }
+      78%, 84% { opacity: 1; transform: scale(1); }
+      88%, 100% { opacity: 0; transform: scale(0.22); }
+    }
+
+    @keyframes learn-training {
+      0%, 84% { opacity: 0; transform: scale(0.78); }
+      89%, 100% { opacity: 1; transform: scale(1); }
+    }
+
+    @keyframes learn-training-route {
+      0%, 75% { opacity: 0; }
+      80%, 100% { opacity: 1; }
+    }
+
+    @keyframes learn-policy-route {
+      0%, 88% { opacity: 0; }
+      94%, 100% { opacity: 1; }
+    }
+
+    @keyframes learn-return {
+      0%, 94% { opacity: 0; }
+      98%, 100% { opacity: 1; }
+    }
+
+    @keyframes learn-new-policy {
+      0%, 88% { opacity: 0; transform: translateY(0.7rem) scale(0.96); }
+      94%, 100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+      }
+    }
+
+    @media print {
+      @page { size: 16in 9in; margin: 0; }
+      body { background: #fff; }
+      .deck { box-shadow: none; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck" aria-label="Hum Climber presentation">
+    <svg class="contours" viewBox="0 0 670 420" aria-hidden="true">
+      <path d="M24 391C64 351 52 301 108 279s91 8 128-35 34-112 99-139 112 7 158-35 93-57 153-39 64 72 101 95"/>
+      <path d="M6 364c50-32 53-77 104-98 55-23 92 1 131-39s39-101 96-124 102 10 150-29 94-49 147-29 55 71 90 96"/>
+      <path d="M-5 335c52-23 62-63 111-82 56-21 91-5 133-43s43-89 99-110 95 13 146-24 91-40 139-18 48 66 83 92"/>
+      <path d="M-4 305c48-17 65-50 109-67 56-21 93-10 136-45s48-76 99-96 91 14 143-19 87-31 132-7 43 61 75 88"/>
+      <path d="M4 274c45-11 64-40 103-53 52-18 91-14 135-46s52-65 100-81 86 16 138-15 82-22 123 2 39 56 68 82"/>
+      <path d="M25 241c38-7 58-30 93-41 48-14 82-14 126-43s57-55 101-68 81 17 132-10 76-14 114 10 35 50 61 75"/>
+      <path d="M55 208c31-4 49-23 80-30 43-11 75-12 115-38s59-45 101-55 74 18 123-6 69-7 102 16 31 44 54 67"/>
+    </svg>
+
+    <svg class="mountain-silhouette" viewBox="0 0 1600 224" preserveAspectRatio="none" aria-hidden="true">
+      <path fill="#09191e" d="M0 224V180l130-53 84 27 161-99 118 79 108-54 151 91 137-114 103 66 140-104 117 93 100-39 171 81v50H0Z"/>
+      <path fill="rgba(108,170,181,.11)" d="m375 55 55 37 34-8-71 51-18-10-42 25-119 4 161-99Zm514 2 54 35 22-9 27 40-103-66Zm423-38 46 37 18-8 53 45-100-20-117 39 100-93Z"/>
+    </svg>
+
+    <section class="slide slide-1 active" aria-labelledby="slide-title">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark" aria-hidden="true">S</span> SummitOS</div>
+        <div class="section-label">Adaptive mountain locomotion</div>
+      </header>
+
+      <div class="content">
+        <div class="copy">
+          <p class="eyebrow">The challenge</p>
+          <h1 id="slide-title">Robot locomotion in <em>extreme terrain</em></h1>
+          <ul class="challenge-points">
+            <li>Environmental conditions change continuously.</li>
+            <li>Deployment conditions are difficult to predict in advance.</li>
+          </ul>
+        </div>
+
+        <figure class="terrain-figure" aria-label="A steep route where terrain, grip, grade, wind and balance vary continuously.">
+          <svg class="terrain-map" viewBox="0 0 430 395" aria-hidden="true">
+            <path class="ridge-back" d="M8 336 76 260l42 27 73-132 43 54 79-151 108 278Z"/>
+            <path class="snow" d="m313 58 28 72-22-12-16 18-20-20-21 14 51-72ZM191 155l22 28-17-4-9 15-13-10-12 8 29-37Z"/>
+            <path class="ridge-front" d="M0 364 65 310l38 17 58-84 44 43 54-81 38 49 38-32 55 52 80 90Z"/>
+            <path class="route" d="M29 347c51-34 80-13 99-57 21-49 69-24 87-74 16-44 66-39 89-83 17-32 33-45 47-57"/>
+            <path class="weather" d="M319 90h72m-58 12h49m-30 12h31"/>
+            <path class="weather" d="M74 292c14-10 28-7 39-19m-20 37c13-8 24-6 34-16"/>
+            <circle class="probe-ring" cx="215" cy="216" r="9"/>
+            <circle class="probe-core" cx="215" cy="216" r="2.7"/>
+            <circle class="probe-ring" cx="304" cy="133" r="7"/>
+            <circle class="probe-core" cx="304" cy="133" r="2.2"/>
+          </svg>
+          <span class="condition condition-terrain"><span class="condition-copy"><strong>Terrain</strong><small>Rock → ice</small></span></span>
+          <span class="condition condition-grip"><span class="condition-copy"><strong>Grip</strong><small>High → low</small></span></span>
+          <span class="condition condition-grade"><span class="condition-copy"><strong>Grade</strong><small>0 → 20%</small></span></span>
+          <span class="condition condition-wind"><span class="condition-copy"><strong>Wind</strong><small>0 → 16 N</small></span></span>
+          <span class="condition condition-balance"><span class="condition-copy"><strong>Balance</strong><small>Stable → fall</small></span></span>
+        </figure>
+
+        <figure class="system-figure" aria-label="SummitOS selects among specialist policies from live sensor inputs and requests training when no policy fits.">
+          <div class="figure-head">
+            <span class="figure-kicker">Policy orchestration loop</span>
+            <span class="live">Live sensing</span>
+          </div>
+
+          <div class="sensor-rail" aria-label="Environment inputs">
+            <div class="sensor"><b>01</b>Terrain</div>
+            <div class="sensor"><b>02</b>Grip</div>
+            <div class="sensor"><b>03</b>Grade</div>
+            <div class="sensor"><b>04</b>Wind</div>
+            <div class="sensor"><b>05</b>Posture</div>
+          </div>
+
+          <svg class="signal-paths" viewBox="0 0 425 395" aria-hidden="true">
+            <path class="active-route" d="M43 77C43 117 139 109 170 164"/>
+            <path class="active-route" d="M128 77c0 44 37 54 55 82"/>
+            <path class="active-route" d="M213 77v77"/>
+            <path class="active-route" d="M298 77c0 44-37 54-55 82"/>
+            <path class="active-route" d="M383 77c0 40-96 32-128 87"/>
+            <path d="M159 194 96 139"/>
+            <path d="M266 187 334 137"/>
+            <path d="M273 216 350 236"/>
+            <path d="M249 270 314 328"/>
+            <path d="M176 267 104 328"/>
+            <path stroke="#f2bc6d" d="M154 226c-33 2-30 2-49 3"/>
+            <path stroke="#f2bc6d" d="M59 260c-2 34 56 68 113 34"/>
+          </svg>
+
+          <div class="orchestrator">
+            <span class="mountain-mark" aria-hidden="true"></span>
+            <span class="orchestrator-name">SummitOS</span>
+            <span class="orchestrator-role">Orchestrator</span>
+          </div>
+
+          <div class="policy policy-flat">
+            <span class="policy-dot"></span>
+            <span class="policy-copy"><b>Normal walk</b><small>Stable ground</small></span>
+          </div>
+          <div class="policy policy-ice">
+            <span class="policy-dot"></span>
+            <span class="policy-copy"><b>Low-friction</b><small>Ice + incline</small></span>
+          </div>
+          <div class="policy policy-wind">
+            <span class="policy-dot"></span>
+            <span class="policy-copy"><b>High-wind</b><small>Crosswind</small></span>
+          </div>
+          <div class="policy policy-rough">
+            <span class="policy-dot"></span>
+            <span class="policy-copy"><b>Rough terrain</b><small>Uneven ground</small></span>
+          </div>
+          <div class="policy policy-recovery">
+            <span class="policy-dot"></span>
+            <span class="policy-copy"><b>Get up</b><small>Fall recovery</small></span>
+          </div>
+
+          <div class="training-loop">
+            <b>No policy fits?</b>
+            <span>Send conditions to training server. Return a new specialist.</span>
+          </div>
+
+          <figcaption class="figure-caption">Sense → select → act → learn</figcaption>
+        </figure>
+      </div>
+
+      <footer class="footer">
+        <span class="footer-title">SummitOS</span>
+        <span class="slide-index"><strong>01</strong> / 03</span>
+      </footer>
+    </section>
+
+    <section class="slide slide-2" aria-labelledby="slide-2-title">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark" aria-hidden="true">S</span> SummitOS</div>
+        <div class="section-label">Specialist policies</div>
+      </header>
+
+      <div class="policy-story">
+        <div class="story-heading">
+          <h2 id="slide-2-title">Locomotion policies in extreme terrain</h2>
+          <p>Good at individual environmental conditions</p>
+        </div>
+
+        <div class="success-scene">
+          <div class="video-grid success-grid">
+            <article class="video-card">
+              <div class="video-frame">
+                <video muted loop playsinline preload="metadata" aria-label="Walking policy demonstration">
+                  <source src="assets/presentation/walking-policy.mp4" type="video/mp4">
+                </video>
+              </div>
+              <div class="video-caption"><strong>Walking policy</strong><span class="status-badge status-good">Works</span></div>
+            </article>
+
+            <article class="video-card">
+              <div class="video-frame">
+                <video muted loop playsinline preload="metadata" aria-label="Low-friction incline policy demonstration">
+                  <source src="assets/presentation/incline-policy.mp4" type="video/mp4">
+                </video>
+              </div>
+              <div class="video-caption"><strong>Low-friction incline policy</strong><span class="status-badge status-good">Works</span></div>
+            </article>
+
+            <article class="video-card">
+              <div class="video-frame">
+                <video muted loop playsinline preload="metadata" aria-label="Wind policy demonstration">
+                  <source src="assets/presentation/wind-policy.mp4" type="video/mp4">
+                </video>
+              </div>
+              <div class="video-caption"><strong>Wind policy</strong><span class="status-badge status-good">Works</span></div>
+            </article>
+          </div>
+        </div>
+
+        <div class="failure-scene">
+          <h3 class="failure-heading">But one policy is <em>not robust</em> across conditions</h3>
+          <div class="video-grid failure-grid">
+            <article class="video-card">
+              <div class="video-frame">
+                <video muted loop playsinline preload="metadata" aria-label="Base policy failing on an incline">
+                  <source src="assets/presentation/base-on-incline.mp4" type="video/mp4">
+                </video>
+              </div>
+              <div class="video-caption"><strong>Walking policy on incline</strong><span class="status-badge status-fail">Fails</span></div>
+            </article>
+
+            <article class="video-card">
+              <div class="video-frame">
+                <video muted loop playsinline preload="metadata" aria-label="Base policy failing in wind">
+                  <source src="assets/presentation/base-in-wind.mp4" type="video/mp4">
+                </video>
+              </div>
+              <div class="video-caption"><strong>Walking policy in wind</strong><span class="status-badge status-fail">Fails</span></div>
+            </article>
+          </div>
+        </div>
+
+        <div class="replay-hint">R to replay animation</div>
+      </div>
+
+      <footer class="footer">
+        <span class="footer-title">Specialists succeed inside their training conditions</span>
+        <span class="slide-index"><strong>02</strong> / 03</span>
+      </footer>
+    </section>
+
+    <section class="slide slide-3" aria-labelledby="slide-3-title">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark" aria-hidden="true">S</span> SummitOS</div>
+        <div class="section-label">Dynamic policy orchestration</div>
+      </header>
+
+      <div class="os-story">
+        <div class="os-heading">
+          <h2 id="slide-3-title"><span>SummitOS:</span> Dynamic mixture of locomotion policies</h2>
+          <p>Sense the environment. Select the right specialist.</p>
+        </div>
+
+        <div class="policy-bank" aria-label="Five individual locomotion policies">
+          <article class="bank-policy">
+            <div class="bank-media"><video muted loop playsinline preload="metadata"><source src="assets/presentation/walking-policy.mp4" type="video/mp4"></video></div>
+            <div class="bank-label">Walking</div>
+          </article>
+          <article class="bank-policy">
+            <div class="bank-media"><video muted loop playsinline preload="metadata"><source src="assets/presentation/incline-policy.mp4" type="video/mp4"></video></div>
+            <div class="bank-label">Low-friction incline</div>
+          </article>
+          <article class="bank-policy">
+            <div class="bank-media"><video muted loop playsinline preload="metadata"><source src="assets/presentation/wind-policy.mp4" type="video/mp4"></video></div>
+            <div class="bank-label">High-wind</div>
+          </article>
+          <article class="bank-policy">
+            <div class="bank-media"><video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video></div>
+            <div class="bank-label">Rough terrain</div>
+          </article>
+          <article class="bank-policy">
+            <div class="bank-media"><video muted loop playsinline preload="metadata"><source src="assets/presentation/fall-recovery-policy.mp4" type="video/mp4"></video></div>
+            <div class="bank-label">Fall recovery</div>
+          </article>
+        </div>
+
+        <div class="summit-core" aria-label="SummitOS dynamic policy selector">
+          <span class="core-mark">S</span>
+          <span class="core-name">SummitOS</span>
+          <span class="core-role">Dynamic policy selection</span>
+          <div class="core-policy-strip" aria-label="Policies loaded in SummitOS">
+            <span class="core-policy-thumb"><video muted loop playsinline preload="metadata"><source src="assets/presentation/walking-policy.mp4" type="video/mp4"></video></span>
+            <span class="core-policy-thumb"><video muted loop playsinline preload="metadata"><source src="assets/presentation/incline-policy.mp4" type="video/mp4"></video></span>
+            <span class="core-policy-thumb"><video muted loop playsinline preload="metadata"><source src="assets/presentation/wind-policy.mp4" type="video/mp4"></video></span>
+            <span class="core-policy-thumb"><video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video></span>
+            <span class="core-policy-thumb"><video muted loop playsinline preload="metadata"><source src="assets/presentation/fall-recovery-policy.mp4" type="video/mp4"></video></span>
+          </div>
+        </div>
+
+        <div class="runtime-flow" aria-label="Runtime policy selection flow">
+          <div class="flow-node input-api"><b>Weather API</b><small>Wind and conditions</small></div>
+          <div class="flow-node input-sensor"><b>Sensor data</b><small>Terrain and robot state</small></div>
+          <div class="flow-node policy-output"><b>Selected policy</b><small>Best available specialist</small></div>
+          <svg class="flow-lines" viewBox="0 0 888 350" preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <marker id="arrow-ice" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5 0 10Z" fill="#9ee8f2"/></marker>
+              <marker id="arrow-safe-runtime" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5 0 10Z" fill="#82d6a8"/></marker>
+            </defs>
+            <path d="M90 80L444 57" marker-end="url(#arrow-ice)"/>
+            <path d="M90 160L444 57" marker-end="url(#arrow-ice)"/>
+            <path class="return-path" d="M444 57L798 120" marker-end="url(#arrow-safe-runtime)"/>
+          </svg>
+        </div>
+
+        <div class="learning-flow" aria-label="Unknown-condition training loop">
+          <div class="flow-node unknown-state"><b>Policy not present</b><small>Unknown environment detected</small></div>
+          <div class="server-node flow-node"><span class="server-icon">▦</span><b>Policy server</b><small>Launch parallel simulation</small></div>
+          <div class="training-sim-grid" aria-label="Twelve robots training in parallel">
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+            <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
+          </div>
+          <div class="flow-node training-node"><b>RL training</b><small>16 simulations merged</small></div>
+          <div class="flow-node new-policy"><b>New policy added</b><small>Available for future deployment</small></div>
+          <span class="request-label">Environment conditions</span>
+          <span class="return-label">Trained policy</span>
+          <svg class="flow-lines" viewBox="0 0 888 350" preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <marker id="arrow-request" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5 0 10Z" fill="#f2bc6d"/></marker>
+              <marker id="arrow-safe-learning" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5 0 10Z" fill="#82d6a8"/></marker>
+            </defs>
+            <path class="request-path" d="M444 57L802 102" marker-end="url(#arrow-request)"/>
+            <path class="training-path" d="M802 102L444 211" marker-end="url(#arrow-request)"/>
+            <path class="policy-path" d="M444 211L85 102" marker-end="url(#arrow-safe-learning)"/>
+            <path class="return-path" d="M85 102L444 57" marker-end="url(#arrow-safe-learning)"/>
+          </svg>
+        </div>
+
+        <div class="replay-hint">R to replay animation</div>
+      </div>
+
+      <footer class="footer">
+        <span class="footer-title">Select, deploy, learn, expand</span>
+        <span class="slide-index"><strong>03</strong> / 03</span>
+      </footer>
+    </section>
+  </main>
+  <script>
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    let currentSlide = 0;
+    document.body.classList.toggle('preview-failure', new URLSearchParams(location.search).get('stage') === 'failure');
+    document.body.classList.toggle('preview-learning', new URLSearchParams(location.search).get('stage') === 'learning');
+    document.body.classList.toggle('preview-bank', new URLSearchParams(location.search).get('stage') === 'bank');
+    document.body.classList.toggle('preview-runtime', new URLSearchParams(location.search).get('stage') === 'runtime');
+    document.body.classList.toggle('preview-simulation', new URLSearchParams(location.search).get('stage') === 'simulation');
+
+    function playVisibleVideos() {
+      slides.forEach((slide, index) => {
+        slide.querySelectorAll('video').forEach((video) => {
+          if (index === currentSlide) {
+            video.currentTime = 0;
+            video.play().catch(() => {});
+          } else {
+            video.pause();
+          }
+        });
+      });
+    }
+
+    function showSlide(index) {
+      currentSlide = Math.max(0, Math.min(index, slides.length - 1));
+      slides.forEach((slide, slideIndex) => slide.classList.toggle('active', slideIndex === currentSlide));
+      history.replaceState(null, '', `#${currentSlide + 1}`);
+      playVisibleVideos();
+    }
+
+    function replaySlide() {
+      const slide = slides[currentSlide];
+      slide.classList.remove('active');
+      void slide.offsetWidth;
+      slide.classList.add('active');
+      playVisibleVideos();
+    }
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowRight' || event.key === 'PageDown' || event.key === ' ') {
+        event.preventDefault();
+        showSlide(currentSlide + 1);
+      } else if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
+        event.preventDefault();
+        showSlide(currentSlide - 1);
+      } else if (event.key.toLowerCase() === 'r') {
+        replaySlide();
+      }
+    });
+
+    const requestedSlide = Number.parseInt(location.hash.slice(1), 10) - 1;
+    showSlide(Number.isFinite(requestedSlide) ? requestedSlide : 0);
+  </script>
+</body>
+</html>

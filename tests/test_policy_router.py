@@ -1,5 +1,6 @@
 """Tests for the demo policy-routing heuristic."""
 
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -48,7 +49,7 @@ def test_motion_profile_separates_current_environment_and_command_velocity() -> 
     assert "Low-friction incline" in html
     assert "High crosswind" not in html
     assert "FRICTION" in html and "μ 0.37" in html
-    assert "INCLINE" in html and "+12.6%" in html
+    assert "INCLINE" in html and "7.2°" in html
     assert "COMMAND VELOCITY" in html
     assert "+0.50 m/s" in html
 
@@ -194,10 +195,10 @@ def test_low_friction_incline_selects_available_ice_policy() -> None:
     assert decision.training_request is None
 
 
-def test_maximum_incline_allows_small_sensor_roundoff() -> None:
+def test_thirty_degree_incline_allows_small_sensor_roundoff() -> None:
     decision = route_policy(
         TerrainContext(
-            slope_gradient=0.2005,
+            slope_gradient=math.tan(math.radians(30.0)) + 0.0005,
             friction=0.8,
             roughness_m=0.0,
             step_height_m=0.0,
@@ -304,7 +305,7 @@ def test_fall_prioritizes_recovery_even_on_nominal_terrain() -> None:
 def test_out_of_envelope_value_requests_training() -> None:
     decision = route_policy(
         TerrainContext(
-            slope_gradient=0.28,
+            slope_gradient=math.tan(math.radians(35.0)),
             friction=0.08,
             roughness_m=0.01,
             step_height_m=0.0,

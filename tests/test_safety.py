@@ -45,13 +45,33 @@ def test_integrated_recovery_matches_standalone_start_frame() -> None:
   class Scene(dict):
     env_origins = torch.tensor([[10.0, -4.0, 0.0]])
 
+  written: dict[str, torch.Tensor | bool] = {}
   robot = SimpleNamespace(
-    data=SimpleNamespace(body_link_pos_w=torch.tensor([[[12.0, -3.0, 0.4]]]))
+    data=SimpleNamespace(
+      body_link_pos_w=torch.tensor([[[12.0, -3.0, 0.4]]]),
+      body_link_quat_w=torch.tensor([[[1.0, 0.0, 0.0, 0.0]]]),
+      joint_pos=torch.zeros((1, 29)),
+      root_link_pos_w=torch.tensor([[12.0, -3.0, 0.4]]),
+    ),
+    write_joint_state_to_sim=lambda pos, vel, **_kwargs: written.update(
+      joint_pos=pos.clone(), joint_vel=vel.clone()
+    ),
+    write_root_state_to_sim=lambda state, **_kwargs: written.update(
+      root_state=state.clone()
+    ),
+    reset=lambda **_kwargs: written.update(robot_reset=True),
   )
   adapter = object.__new__(RecoveryPolicyAdapter)
-  adapter._env = SimpleNamespace(scene=Scene(robot=robot))
+  adapter._env = SimpleNamespace(
+    scene=Scene(robot=robot),
+    sim=SimpleNamespace(forward=lambda: written.update(sim_forward=True)),
+  )
   adapter._joint_pos = torch.zeros((401, 29))
+  adapter._joint_vel = torch.zeros((401, 29))
   adapter._body_pos = torch.tensor([[[0.5, 0.25, 0.1]]]).repeat(401, 1, 1)
+  adapter._body_quat = torch.tensor([[[1.0, 0.0, 0.0, 0.0]]]).repeat(401, 1, 1)
+  adapter._body_lin_vel = torch.zeros((401, 1, 3))
+  adapter._body_ang_vel = torch.zeros((401, 1, 3))
   adapter._anchor_index = 0
   adapter._frame = 200
   adapter._xy_offset = None
@@ -61,6 +81,14 @@ def test_integrated_recovery_matches_standalone_start_frame() -> None:
 
   assert adapter._frame == 0
   assert torch.allclose(adapter._xy_offset, torch.tensor([1.5, 0.75]))
+  assert torch.allclose(
+    written["root_state"],
+    torch.tensor([[12.0, -3.0, 0.1, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]),
+  )
+  assert torch.equal(written["joint_pos"], torch.zeros((1, 29)))
+  assert torch.equal(written["joint_vel"], torch.zeros((1, 29)))
+  assert written["robot_reset"] is True
+  assert written["sim_forward"] is True
   assert adapter.active is True
 
 

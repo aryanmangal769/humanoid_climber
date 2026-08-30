@@ -1,3 +1,5 @@
+import math
+
 import mujoco
 import pytest
 import torch
@@ -72,6 +74,7 @@ from humanoid_climber.safety import CENTERLINE_MAX_OFFSET_M
 from humanoid_climber.mdp import advance_infinite_trail, orchestrated_policy_sequence
 from humanoid_climber.orchestrator import (
   HIGH_WIND_FORCE_RANGES,
+  INCLINE_ANGLE_RANGE_DEG,
   INCLINE_FRICTION_RANGE,
   INCLINE_GRADIENT_RANGE,
   POLICY_ANNOUNCEMENT_DELAY_SECONDS,
@@ -182,8 +185,18 @@ def test_showcase_environment_pins_the_requested_sequence() -> None:
   assert sequencer.func is orchestrated_policy_sequence
   assert sequencer.params["normal_friction_range"] == (0.8, 0.8)
   assert sequencer.params["ice_friction_range"] == INCLINE_FRICTION_RANGE
+  assert INCLINE_FRICTION_RANGE == (0.1, 0.3)
+  assert INCLINE_ANGLE_RANGE_DEG == (10.0, 30.0)
+  assert INCLINE_GRADIENT_RANGE == pytest.approx(
+    (math.tan(math.radians(10.0)), math.tan(math.radians(30.0)))
+  )
   assert "wind_ice_friction_range" not in sequencer.params
   assert sequencer.params["wind_force_ranges"] == HIGH_WIND_FORCE_RANGES
+  assert HIGH_WIND_FORCE_RANGES == {
+    "x": (0.0, 0.0),
+    "y": (8.0, 20.0),
+    "z": (0.0, 0.0),
+  }
   assert sequencer.params["slope_gradient_range"] == INCLINE_GRADIENT_RANGE
   assert sequencer.params["active_slope_magnitude_range"] == INCLINE_GRADIENT_RANGE
   assert sequencer.params["slope_piece_count"] == SLOPE_PATCH_SEGMENT_COUNT
@@ -439,9 +452,12 @@ def test_treadmill_play_mode_uses_one_long_flat_strip() -> None:
   )
   assert len(mound_names) == TREADMILL_ROUGH_MOUND_COUNT
   assert len(rock_names) == TREADMILL_ROCK_COUNT
-  assert RANDOM_ROUGH_LATERAL_RANGE_M == pytest.approx((-6.56, 6.56))
-  assert TREADMILL_ROUGH_COLS == 40
-  assert TREADMILL_ROCK_COUNT == 64
+  assert RANDOM_ROUGH_FORWARD_RANGE_M == pytest.approx((-1.25, 1.25))
+  assert RANDOM_ROUGH_LATERAL_RANGE_M == pytest.approx((-13.12, 13.12))
+  assert TREADMILL_ROUGH_ROWS == 6
+  assert TREADMILL_ROUGH_COLS == 80
+  assert TREADMILL_ROUGH_MOUND_COUNT == 480
+  assert TREADMILL_ROCK_COUNT == 128
   assert MOUNTAIN_COUNT == 52
   assert MOUNTAIN_LATERAL_BANDS_M == (24.0, 38.0)
   assert MOUNTAIN_STATION_X_M[0] == -240.0

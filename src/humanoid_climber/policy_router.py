@@ -286,7 +286,7 @@ POLICIES: tuple[PolicySpec, ...] = (
         model="model_34400.pt",
         readiness=PolicyReadiness.AVAILABLE,
         limits={
-            "slope_gradient": (None, 0.20),
+            "slope_gradient": (None, math.tan(math.radians(30.0))),
             "friction": (0.005, None),
             "roughness_m": (None, 0.03),
             "step_height_m": (None, 0.04),
@@ -303,7 +303,7 @@ POLICIES: tuple[PolicySpec, ...] = (
             "friction": (0.15, None),
             "roughness_m": (None, 0.025),
             "step_height_m": (None, 0.04),
-            "wind_force_n": (None, 18.0),
+            "wind_force_n": (None, 20.0),
         },
     ),
     PolicySpec(
@@ -330,6 +330,7 @@ POLICIES: tuple[PolicySpec, ...] = (
 
 _POLICY_BY_KEY = {policy.key: policy for policy in POLICIES}
 FOUNDATIONAL_POLICY_KEYS: tuple[str, ...] = tuple(policy.key for policy in POLICIES)
+SHOWCASE_MAX_INCLINE_GRADIENT = math.tan(math.radians(30.0))
 
 
 def route_policy(context: TerrainContext) -> RoutingDecision:
@@ -567,16 +568,18 @@ def _classify(context: TerrainContext) -> tuple[str, str | None, str | None]:
         return "fallen / recovery", "recovery", None
 
     extreme_reasons: list[str] = []
-    if slope > 0.202:
-        extreme_reasons.append(f"gradient {slope:.2f} > 0.20")
+    if slope > SHOWCASE_MAX_INCLINE_GRADIENT + 0.002:
+        extreme_reasons.append(
+            f"gradient {slope:.2f} > {SHOWCASE_MAX_INCLINE_GRADIENT:.2f}"
+        )
     if friction is not None and friction < 0.003:
         extreme_reasons.append(f"friction {friction:.3f} < 0.005")
     if rough > 0.102:
         extreme_reasons.append(f"roughness {rough:.2f} m > 0.10 m")
     if step > 0.152:
         extreme_reasons.append(f"step {step:.2f} m > 0.15 m")
-    if wind > 18.1:
-        extreme_reasons.append(f"wind {wind:.0f} N > 18 N")
+    if wind > 20.1:
+        extreme_reasons.append(f"wind {wind:.0f} N > 20 N")
     if extreme_reasons:
         return "out-of-envelope terrain", None, "; ".join(extreme_reasons)
 

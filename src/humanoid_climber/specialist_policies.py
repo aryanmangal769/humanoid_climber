@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import math
 from pathlib import Path
 from typing import Any
 
@@ -135,6 +136,12 @@ class RecoveryPolicyAdapter:
       self._body_quat = torch.as_tensor(
         motion["body_quat_w"], dtype=torch.float32, device=device
       )
+      self._body_lin_vel = torch.as_tensor(
+        motion["body_lin_vel_w"], dtype=torch.float32, device=device
+      )
+      self._body_ang_vel = torch.as_tensor(
+        motion["body_ang_vel_w"], dtype=torch.float32, device=device
+      )
     if motion_fps != 50:
       raise ValueError(f"Recovery motion must run at 50 Hz, received {motion_fps} Hz")
     if self._joint_pos.ndim != 2 or self._joint_pos.shape[1] != 29:
@@ -156,7 +163,7 @@ class RecoveryPolicyAdapter:
     return self._frame >= len(self._joint_pos) - 1
 
   def start(self, env_idx: int, walking_observations: Any) -> None:
-    """Start at the exact supine frame used by standalone recovery playback."""
+    """Recreate the standalone frame-zero state before recovery inference."""
     actor_obs = _actor_tensor(walking_observations)
     if actor_obs.ndim != 2 or actor_obs.shape[1] != 99:
       raise ValueError("Integrated recovery requires the 99-value walking observation")
@@ -171,7 +178,52 @@ class RecoveryPolicyAdapter:
     current_anchor = robot.data.body_link_pos_w[env_idx, self._anchor_index]
     reference_anchor = self._body_pos[self._frame, self._anchor_index]
     env_origin = self._env.scene.env_origins[env_idx]
-    self._xy_offset = current_anchor[:2] - env_origin[:2] - reference_anchor[:2]
+    joint_rmse = torch.mean(
+      (robot.data.joint_pos[env_idx] - self._joint_pos[self._frame]).square()
+    ).sqrt()
+    current_quat = robot.data.body_link_quat_w[env_idx, self._anchor_index]
+    reference_quat = self._body_quat[self._frame, self._anchor_index]
+    quat_dot = torch.dot(current_quat, reference_quat).abs().clamp(0.0, 1.0)
+    orientation_error_deg = math.degrees(2.0 * math.acos(float(quat_dot.item())))
+    height_error_m = float(
+      (current_anchor[2] - env_origin[2] - reference_anchor[2]).item()
+    )
+    print(
+      "[RECOVERY START] "
+      f"reference_frame=0 joint_rmse={float(joint_rmse.item()):.3f} rad "
+      f"torso_height_error={height_error_m:+.3f} m "
+      f"torso_orientation_error={orientation_error_deg:.1f} deg "
+      "canonicalized=true"
+    )
+
+    # Standalone playback does not ask this policy to recover from an arbitrary
+    # terminal walking pose: MotionCommand writes the frame-zero reference root,
+    # joints, and velocities into MuJoCo first. Reproduce that contract here,
+    # retaining only the fallen robot's world XY location.
+    root_reference = self._body_pos[self._frame, 0]
+    current_root = robot.data.root_link_pos_w[env_idx]
+    self._xy_offset = current_root[:2] - env_origin[:2] - root_reference[:2]
+    root_pos = root_reference.clone() + env_origin
+    root_pos[:2] += self._xy_offset
+    root_state = torch.cat(
+      (
+        root_pos,
+        self._body_quat[self._frame, 0],
+        self._body_lin_vel[self._frame, 0],
+        self._body_ang_vel[self._frame, 0],
+      )
+    )[None, :]
+    env_ids = torch.tensor(
+      [env_idx], device=robot.data.joint_pos.device, dtype=torch.long
+    )
+    robot.write_joint_state_to_sim(
+      self._joint_pos[self._frame][None, :],
+      self._joint_vel[self._frame][None, :],
+      env_ids=env_ids,
+    )
+    robot.write_root_state_to_sim(root_state, env_ids=env_ids)
+    robot.reset(env_ids=env_ids)
+    self._env.sim.forward()
     self._active = True
 
   def reset(self) -> None:

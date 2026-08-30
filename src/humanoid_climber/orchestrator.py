@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 
 STAGE_DURATION_SECONDS = 12.0
 POLICY_ANNOUNCEMENT_DELAY_SECONDS = 1.0
 INCLINE_GRADIENT = 0.20
 INCLINE_FRICTION = 0.15
-INCLINE_GRADIENT_RANGE = (0.0, 0.20)
-INCLINE_FRICTION_RANGE = (0.1, 1.0)
+INCLINE_ANGLE_RANGE_DEG = (10.0, 30.0)
+INCLINE_GRADIENT_RANGE = tuple(
+  math.tan(math.radians(angle)) for angle in INCLINE_ANGLE_RANGE_DEG
+)
+INCLINE_FRICTION_RANGE = (0.1, 0.3)
 HIGH_WIND_FORCE_RANGES = {
-  "x": (-4.0, 4.0),
-  "y": (-16.0, 16.0),
+  "x": (0.0, 0.0),
+  "y": (8.0, 20.0),
   "z": (0.0, 0.0),
 }
 

@@ -833,7 +833,9 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
                 return True
             controller = _showcase_controller(self.env)
             if controller is None:
-                raise RuntimeError("The deterministic showcase controller is unavailable.")
+                # Standalone project tasks, such as the rough-terrain recording
+                # demo, use the ordinary checkpoint player without SummitOS.
+                return super()._execute_step()
             active_events = tuple(controller.active_event_names(env_idx))
             policy_key = str(controller.requested_policy_key)
             context = self._routing_context_for_step(
@@ -994,6 +996,9 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
                 if self._imbalance_recovery_latched:
                     if not self._recovery_policy.active:
                         self._recovery_policy.start(env_idx, obs)
+                        # start() writes the canonical frame-zero recovery state
+                        # into MuJoCo, so discard observations from the old fall.
+                        obs = self.env.get_observations()
                     actions = self._specialist_bank.action(policy_key, obs)
                     recovery_action = self._recovery_policy.action(env_idx, obs)
                     actions[env_idx] = recovery_action[0]
@@ -1247,7 +1252,7 @@ def _motion_telemetry_html(env: Any, env_idx: int) -> str:
     )
     slope = _actual_treadmill_slope(base, env_idx)
     current_incline = (
-        f"{slope * 100:+.1f}%"
+        f"{math.degrees(math.atan(slope)):.1f}°"
         if current_key == "incline" and slope is not None
         else "Level"
     )
