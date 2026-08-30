@@ -14,6 +14,23 @@
 - [x] Ran the stable A10G fine-tune through iteration 34,400, then canceled job `6a93595a984507d9db4ec17b` for privacy cleanup.
 - [x] Recovered `model_34400.pt` locally and uploaded it to the private personal model repository.
 - [x] Evaluated `model_34400.pt` against the stock policy over 16 matched ice-slope episodes; balance and survival improved, but all fine-tuned episodes still fell within 10 seconds.
+- [x] Added physical flat-ground and incline wind environments with a fixed `16 N` evaluation crosswind.
+- [x] Launched flat-wind fine-tuning over friction `0.15–1.0`, X wind `-4–4 N`, and Y wind `-16–16 N`.
+- [x] Added and locally smoke-tested the native 29-action supine recovery tracking task.
+- [x] Launched bounded recovery training from scratch using the private native MjLab motion artifact.
+
+## Mixture-of-policies roadmap
+
+- [x] Policy 1: stock flat-ground walker.
+- [x] Policy 2: intermediate low-friction incline walker (`model_34400.pt`).
+- [ ] Policy 3: recover and evaluate the active flat-wind training checkpoint.
+- [ ] Policy 4: recover and evaluate the active supine-recovery checkpoint.
+- [ ] Policy 5: implement a rough-terrain curriculum and fine-tune a dedicated walker.
+- [ ] Create a policy registry containing model path, observation adapter, action interface, and validated environment envelope.
+- [ ] Estimate slope, slip/friction, wind, roughness, torso orientation, height, and uncertainty.
+- [ ] Implement hard-gated selection with hysteresis, cooldown, and recovery priority.
+- [ ] Emit `NO_SAFE_POLICY` and enter a safe hold when no validated envelope matches.
+- [ ] Benchmark routing at policy boundaries, under noisy estimates, and outside every supported envelope.
 
 Work in humanoid_climber. Treat it as your project (ice task, scripts, notes). Do not dump the whole mjlab tree into it.
 The other Mac helps watch and edit. It does not replace Hugging Face for training: mjlab train still wants Linux + NVIDIA. A faster Mac only makes play less painful.

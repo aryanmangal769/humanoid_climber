@@ -8,6 +8,7 @@ ckpt/
 checkpoints/
 logs/
 external/
+private_assets/
 *.pt
 *.mov
 

@@ -16,6 +16,9 @@ import torch
 def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser()
   parser.add_argument("checkpoint", type=Path)
+  parser.add_argument(
+    "--task-id", default="HumClimber-Velocity-Ice-Unitree-G1"
+  )
   parser.add_argument("--episodes", type=int, default=32)
   parser.add_argument("--steps", type=int, default=500)
   parser.add_argument("--forward-speed", type=float, default=0.5)
@@ -63,7 +66,7 @@ def main() -> None:
   from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
   from mjlab.utils.torch import configure_torch_backends
 
-  task_id = "HumClimber-Velocity-Ice-Unitree-G1"
+  task_id = args.task_id
   configure_torch_backends()
   env_cfg = load_env_cfg(task_id, play=True)
   env_cfg.scene.num_envs = args.episodes
@@ -85,6 +88,7 @@ def main() -> None:
   )
   policy = runner.get_inference_policy(device=args.device)
 
+  env.reset(seed=args.seed)
   command = env.command_manager.get_command("twist")
   fixed_command = torch.tensor(
     [args.forward_speed, 0.0, 0.0], device=env.device, dtype=command.dtype
@@ -135,8 +139,14 @@ def main() -> None:
   result = {
     "checkpoint": str(args.checkpoint.resolve()),
     "condition": {
+      "task_id": task_id,
       "friction": args.friction,
-      "slope_gradient": 0.2,
+      "slope_gradient": 0.2 if "Ice" in task_id else 0.0,
+      "wind_force_ranges_n": (
+        env_cfg.events["wind"].params["force_ranges"]
+        if "wind" in env_cfg.events
+        else None
+      ),
       "forward_speed_command_mps": args.forward_speed,
       "episode_limit_steps": args.steps,
       "step_dt_seconds": env.step_dt,

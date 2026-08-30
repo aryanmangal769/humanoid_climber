@@ -2,14 +2,30 @@ from humanoid_climber.tasks.g1_ice import (
   EVAL_FRICTION,
   EVAL_SLOPE_GRADIENT,
   EVAL_TERRAIN_SIZE,
+  EVAL_WIND_FORCE_RANGES,
   TRAIN_FRICTION_RANGE,
   TRAIN_SLOPE_RANGE,
   TRAIN_TERRAIN_SIZE,
+  TRAIN_WIND_FORCE_RANGES,
   unitree_g1_ice_env_cfg,
   unitree_g1_ice_ppo_runner_cfg,
 )
 from mjlab.tasks.velocity.config.g1.env_cfgs import unitree_g1_flat_env_cfg
 from mjlab.terrains import HfPyramidSlopedTerrainCfg
+
+from humanoid_climber.tasks.g1_flat_wind import (
+  EVAL_FRICTION as FLAT_WIND_EVAL_FRICTION,
+  TRAIN_FRICTION_RANGE as FLAT_WIND_TRAIN_FRICTION_RANGE,
+  TRAIN_WIND_FORCE_RANGES as FLAT_WIND_TRAIN_FORCE_RANGES,
+  unitree_g1_flat_wind_env_cfg,
+  unitree_g1_flat_wind_ppo_runner_cfg,
+)
+from humanoid_climber.tasks.g1_recovery import (
+  DEFAULT_MOTION_FILE,
+  unitree_g1_recovery_env_cfg,
+  unitree_g1_recovery_ppo_runner_cfg,
+)
+from mjlab.tasks.tracking.mdp import MotionCommandCfg
 
 
 def test_ice_task_keeps_stock_policy_interface() -> None:
@@ -79,7 +95,94 @@ def test_ice_training_uses_slope_curriculum() -> None:
   assert slope.inverted
 
 
+def test_wind_task_applies_crosswind_to_torso() -> None:
+  train = unitree_g1_ice_env_cfg(wind=True)
+  play = unitree_g1_ice_env_cfg(play=True, wind=True)
+
+  assert "wind" not in unitree_g1_ice_env_cfg().events
+  assert train.events["wind"].mode == "reset"
+  assert hasattr(train.events["wind"].func, "debug_vis")
+  assert train.events["wind"].params["force_ranges"] == TRAIN_WIND_FORCE_RANGES
+  assert play.events["wind"].params["force_ranges"] == EVAL_WIND_FORCE_RANGES
+  assert train.events["wind"].params["asset_cfg"].body_names == ("torso_link",)
+
+
+def test_wind_task_keeps_stock_policy_interface() -> None:
+  stock = unitree_g1_flat_env_cfg(play=True)
+  wind = unitree_g1_ice_env_cfg(play=True, wind=True)
+
+  assert tuple(wind.observations["actor"].terms) == tuple(
+    stock.observations["actor"].terms
+  )
+  assert tuple(wind.observations["critic"].terms) == tuple(
+    stock.observations["critic"].terms
+  )
+  assert tuple(wind.actions) == tuple(stock.actions)
+
+
+def test_flat_wind_task_keeps_stock_terrain_and_policy_interface() -> None:
+  stock = unitree_g1_flat_env_cfg(play=True)
+  wind = unitree_g1_flat_wind_env_cfg(play=True)
+
+  assert wind.scene.terrain is not None
+  assert stock.scene.terrain is not None
+  assert wind.scene.terrain.terrain_type == stock.scene.terrain.terrain_type
+  assert wind.scene.terrain.terrain_generator == stock.scene.terrain.terrain_generator
+  assert wind.commands == stock.commands
+  assert tuple(wind.observations["actor"].terms) == tuple(
+    stock.observations["actor"].terms
+  )
+  assert tuple(wind.observations["critic"].terms) == tuple(
+    stock.observations["critic"].terms
+  )
+  assert tuple(wind.actions) == tuple(stock.actions)
+  assert wind.events["wind"].params["force_ranges"] == EVAL_WIND_FORCE_RANGES
+  assert wind.events["foot_friction"].params["ranges"] == (
+    FLAT_WIND_EVAL_FRICTION,
+    FLAT_WIND_EVAL_FRICTION,
+  )
+
+
+def test_flat_wind_training_covers_evaluation_conditions() -> None:
+  train = unitree_g1_flat_wind_env_cfg()
+
+  assert train.events["foot_friction"].params["ranges"] == (
+    FLAT_WIND_TRAIN_FRICTION_RANGE
+  )
+  assert "push_robot" not in train.events
+  assert train.events["wind"].params["force_ranges"] == (
+    FLAT_WIND_TRAIN_FORCE_RANGES
+  )
+  assert FLAT_WIND_TRAIN_FORCE_RANGES["y"] == (-16.0, 16.0)
+
+
+def test_flat_wind_runner_has_dedicated_experiment() -> None:
+  runner = unitree_g1_flat_wind_ppo_runner_cfg()
+
+  assert runner.experiment_name == "g1_flat_wind"
+
+
 def test_ice_runner_has_dedicated_experiment() -> None:
   runner = unitree_g1_ice_ppo_runner_cfg()
   assert runner.experiment_name == "g1_ice"
   assert runner.max_iterations == 5_000
+
+
+def test_recovery_task_uses_native_g1_tracking_interface() -> None:
+  stock = unitree_g1_flat_env_cfg(play=True)
+  recovery = unitree_g1_recovery_env_cfg()
+  motion = recovery.commands["motion"]
+
+  assert isinstance(motion, MotionCommandCfg)
+  assert motion.motion_file == str(DEFAULT_MOTION_FILE)
+  assert recovery.episode_length_s == 8.0
+  assert "push_robot" not in recovery.events
+  assert tuple(recovery.actions) == tuple(stock.actions)
+
+
+def test_recovery_runner_has_dedicated_experiment() -> None:
+  runner = unitree_g1_recovery_ppo_runner_cfg()
+
+  assert runner.experiment_name == "g1_recovery"
+  assert runner.max_iterations == 20_000
+  assert runner.save_interval == 250
