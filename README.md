@@ -73,11 +73,89 @@ On the training Mac, `scripts/poll_hf_job.sh` is installed as the launchd agent
 status updates to `logs/job-monitor/hf-job.log`, and shows a macOS notification
 when the job completes or stops with an error.
 
-## Baseline result
+## Evaluate a checkpoint headlessly
 
-On August 29, 2026, the stock policy could walk sideways at low speed and made
-visible balance corrections at friction 0.2. It fell when given a fast forward
-command. This establishes the baseline before ice-specific finetuning.
+The deterministic evaluator runs matched parallel episodes without opening a
+viewer and writes per-episode JSON under the ignored `logs/` directory:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-rl uv run python scripts/evaluate_policy.py \
+  ckpt/recovered/model_34400.pt \
+  --episodes 16 \
+  --steps 500 \
+  --forward-speed 0.5 \
+  --friction 0.15 \
+  --seed 42 \
+  --output logs/evaluation/model_34400_friction_0.15.json
+```
+
+## Results
+
+The stock policy and recovered `model_34400.pt` checkpoint were tested with
+matched seeds on the fixed `0.2`-gradient slope. Each condition used 16
+episodes, a constant `0.5 m/s` forward command, and a 10-second limit.
+
+| Friction | Policy | Fall rate | Mean survival | Max. height gain | Mean reward |
+|---:|---|---:|---:|---:|---:|
+| 0.10 | Stock | 93.75% | 4.31 s | 0.03 m | -0.98 |
+| 0.10 | Fine-tuned | 100% | 5.63 s | 0.07 m | 16.20 |
+| 0.15 | Stock | 75% | 5.28 s | 0.03 m | -4.42 |
+| 0.15 | Fine-tuned | **68.75%** | **7.70 s** | **0.14 m** | **23.22** |
+
+At friction `0.15`, fine-tuning increased mean survival by `2.42 s`; the paired
+95% confidence interval was `+0.81` to `+4.03 s`. Balance, height, and reward
+also improved, but the policy still fell in most episodes. It is a stronger
+intermediate policy, not yet a reliable climber. See [evaluation.md](evaluation.md)
+for the complete metrics and confidence intervals.
+
+## Development log
+
+### August 29, 2026 — environment and baseline
+
+- Created an isolated Python 3.12 environment with `uv`, MjLab 1.6.0, MuJoCo,
+  Torch, and Warp.
+- Loaded and played the stock Unitree G1 velocity checkpoint without changing
+  its 99-observation/29-action policy interface.
+- Implemented the project-owned ice task with friction randomized from `0.1`
+  to `1.0` during training and fixed at `0.1` during evaluation.
+- Added a deterministic `16 × 16 m`, `0.2`-gradient evaluation slope and a
+  training curriculum from flat ground to gradient `0.2`.
+- Added configuration tests for interface compatibility, friction, commands,
+  slope generation, curriculum behavior, and PPO configuration.
+
+### August 29, 2026 — training and stabilization
+
+- Verified checkpoint resume with one local CPU PPO iteration.
+- Completed a 10-iteration A10G cloud smoke test.
+- Diagnosed a simulation NaN in the initial 4,096-environment run and removed
+  out-of-scope random robot pushes from the low-friction task.
+- Reduced the stable cloud configuration to 1,024 environments and completed a
+  200-iteration stability run.
+- Continued fine-tuning from iteration 30,000 through iteration 34,400 on an
+  A10G before stopping the Job for organization-storage privacy cleanup.
+- Recovered `model_34400.pt` locally and backed it up to a private personal
+  Hugging Face model repository.
+
+### August 29, 2026 — evaluation and privacy
+
+- Built `scripts/evaluate_policy.py` for reproducible headless evaluation with
+  fixed commands, seeds, friction, and slope conditions.
+- Compared the stock and fine-tuned policies at friction `0.1` and `0.15`.
+- Confirmed statistically supported improvements in survival, balance, height,
+  and reward at friction `0.15`, while documenting the remaining fall rate.
+- Removed Hum Climber source snapshots and training outputs from shared
+  organization storage after securing the checkpoint.
+- Added a privacy-first Hugging Face Jobs workflow that rejects plaintext
+  secrets, local-directory uploads to organization buckets, and unverified
+  checkpoint destinations.
+
+## Current status
+
+- Latest recovered checkpoint: `model_34400.pt` (kept outside Git).
+- Best measured condition: friction `0.15`, gradient `0.2`, with 31.25% of
+  episodes completing the 10-second benchmark.
+- Next work: improve reliable forward ascent, add disturbances and friction
+  patches, and train fall recovery. See [ideas.md](ideas.md).
 
 ## Tests
 

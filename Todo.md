@@ -11,8 +11,9 @@
 - [x] Completed a 10-iteration A10G smoke test on Hugging Face Jobs.
 - [x] Stabilized training by removing out-of-scope random pushes after the first full run hit a simulation NaN.
 - [x] Completed a 200-iteration stability test with 1,024 environments.
-- [x] Launched the stable 5,000-iteration A10G job `6a93595a984507d9db4ec17b` under `iteratehack`.
-- [ ] Download and evaluate the final checkpoint after the stable job completes.
+- [x] Ran the stable A10G fine-tune through iteration 34,400, then canceled job `6a93595a984507d9db4ec17b` for privacy cleanup.
+- [x] Recovered `model_34400.pt` locally and uploaded it to the private personal model repository.
+- [x] Evaluated `model_34400.pt` against the stock policy over 16 matched ice-slope episodes; balance and survival improved, but all fine-tuned episodes still fell within 10 seconds.
 
 Work in humanoid_climber. Treat it as your project (ice task, scripts, notes). Do not dump the whole mjlab tree into it.
 The other Mac helps watch and edit. It does not replace Hugging Face for training: mjlab train still wants Linux + NVIDIA. A faster Mac only makes play less painful.
