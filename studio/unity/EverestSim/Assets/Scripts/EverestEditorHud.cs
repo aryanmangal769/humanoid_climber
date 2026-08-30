@@ -426,7 +426,7 @@ namespace EverestSim
             var supervisor = _backend.LatestState?["policy"]?["supervisor"] as JObject;
             var waitingCheckpoint = supervisor?.Value<string>("stage") == "waiting_checkpoint";
             var playLabel = waitingCheckpoint
-                ? (veryNarrow ? "!" : "SAFE HOLD")
+                ? (veryNarrow ? "!" : "SAFETY")
                 : veryNarrow ? (paused ? "▶" : "Ⅱ") : paused ? "▶ RUN" : "Ⅱ PAUSE";
             var controlsEnabled = GUI.enabled;
             GUI.enabled = controlsEnabled && _dataMode == "sim" && !waitingCheckpoint;
@@ -509,7 +509,11 @@ namespace EverestSim
             GUILayout.Label($"stage: {stage} · checkpoint: {supervisor?.Value<string>("executed_checkpoint") ?? "none"}", _tiny);
             if (stage == "waiting_checkpoint")
             {
-                GUILayout.Label("SAFE HOLD · simulation paused while a compatible checkpoint is returned.", _warn);
+                var safety = state?["simulation_settings"]?["safety_pose"] as JObject;
+                var progress = safety?.Value<float?>("transition_progress") ?? 0f;
+                var supports = safety?["support_bodies"] as JArray;
+                GUILayout.Label("ACTIVE SAFETY POSTURE · physics remains live while awaiting a compatible checkpoint.", _warn);
+                GUILayout.Label($"four-point transition {progress:P0} · support contacts {supports?.Count ?? 0}", _tiny);
                 GUILayout.Label($"request {supervisor?.Value<string>("request_id") ?? "pending"}", _tiny);
             }
             GUILayout.Space(4f);

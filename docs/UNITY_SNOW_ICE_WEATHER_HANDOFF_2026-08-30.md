@@ -584,11 +584,19 @@ log is emitted by the same supervisor state that gates the MuJoCo policy step.
 
 When failure is confirmed (or `INJECT DEMO FAILURE` is pressed), the backend:
 
-1. zeros command/manual/cheat inputs and enables a stand lock,
-2. pauses the main simulation in a safe hold,
+1. zeros command/manual/cheat inputs and engages an active safety controller,
+2. keeps physics running while transitioning into a low, wide four-point
+   protective stance,
 3. writes `runs/retrain_requests/<request-id>/manifest.json`, and
 4. exposes a raw 320x240 native MuJoCo offscreen view of the captured
    Newton-window subset at 1 Hz.
+
+The safety controller is the deterministic 29-joint posture ported from
+`humanoid_climber`: a 120 ms aggressive crouch attack blends into a sustained
+hands-and-lower-limbs stance. It does not freeze the root or simulation;
+gravity, wind, terrain contacts, joint dynamics, and Newton continue advancing.
+Planar and angular momentum receive physical damping during the transition.
+The posture remains active until reset or a compatible/demo checkpoint return.
 
 The manifest schema is `everest-rl-subset/v1`. A live Newton capture includes
 the moving-window vertices, per-layer vertices, MPM solver metadata, weather,
@@ -608,6 +616,7 @@ Acceptance commands for this branch:
 
 ```text
 PYTHONPATH=. .venv-sim/bin/python tests/test_policy_supervisor.py
+LD_LIBRARY_PATH=/usr/lib/wsl/lib PYTHONPATH=. .venv-sim/bin/python scripts/verify_safe_posture.py
 LD_LIBRARY_PATH=/usr/lib/wsl/lib PYTHONPATH=. .venv-sim/bin/python scripts/verify_policy_retrain_demo.py
 EVEREST_SIM_CONTROL_TEST_PORT=18767 LD_LIBRARY_PATH=/usr/lib/wsl/lib PYTHONPATH=. .venv-sim/bin/python scripts/verify_unity_sim_controls.py
 EVEREST_UNITY_WEB_PROJECT=/mnt/c/Users/auverus/Documents/EverestUnityWeb2 bash scripts/build-unity-webgl.sh

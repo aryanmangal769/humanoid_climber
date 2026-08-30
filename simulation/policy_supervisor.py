@@ -150,7 +150,11 @@ class PolicySupervisor:
         self.request_id = request_id
         self.request_manifest = manifest
         self.requested_at = time.time()
-        self.log("RETRAIN REQUEST", f"Captured Newton subset {request_id}; robot waiting in safe hold.", sim_time=sim_time)
+        self.log(
+            "RETRAIN REQUEST",
+            f"Captured Newton subset {request_id}; active safety posture remains engaged while awaiting a checkpoint.",
+            sim_time=sim_time,
+        )
 
     def activate_policy(
         self,

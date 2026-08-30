@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import copy
+import time
 
 from dashboard.engines.mujoco import MuJoCoEngine
 from simulation.unity_bridge import DEFAULT_SNOW
@@ -35,8 +36,24 @@ def main() -> None:
         engine.control("demo_failure")
         waiting = engine.state()
         supervisor = waiting["policy"]["supervisor"]
-        assert waiting["paused"]
+        assert not waiting["paused"]
         assert supervisor["stage"] == "waiting_checkpoint"
+        assert waiting["simulation_settings"]["safety_pose"]["active"]
+        assert waiting["simulation_settings"]["safety_pose"]["physics_live"]
+        time_before = waiting["sim_time"]
+        height_before = float(engine.data.qpos[2])
+        engine.start()
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            current = engine.state()
+            if current["sim_time"] >= time_before + 0.5:
+                break
+            time.sleep(0.02)
+        assert current["sim_time"] >= time_before + 0.5
+        assert not current["paused"]
+        assert current["simulation_settings"]["safety_pose"]["active"]
+        assert current["simulation_settings"]["safety_pose"]["transition_progress"] >= 1.0
+        assert float(engine.data.qpos[2]) < height_before - 0.04
         manifest_path = Path(supervisor["request_manifest"])
         manifest = json.loads(manifest_path.read_text())
         assert manifest["schema"] == "everest-rl-subset/v1"

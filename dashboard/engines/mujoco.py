@@ -212,6 +212,12 @@ class MuJoCoEngine:
         self._stand_lock_quat = np.asarray((1.0, 0.0, 0.0, 0.0), dtype=np.float64)
         self._stand_lock_enabled = True
         self._stand_lock_min_z = 0.0
+        self._safety_pose_active = False
+        self._safety_pose_started_at = 0.0
+        self._safety_pose_start_qpos: np.ndarray | None = None
+        self._safety_pose_hold_qpos: np.ndarray | None = None
+        self._safety_pose_attack_seconds = 0.12
+        self._safety_pose_settle_seconds = 0.45
         # The bundled checkpoint was trained on flat terrain. Start stationary
         # on the Everest slope; walking commands remain available over the API.
         self._command = (0.0, 0.0, 0.0)
@@ -229,6 +235,7 @@ class MuJoCoEngine:
         self._policy_period = 0.02
         self._next_policy_time = 0.0
         self._next_supervisor_time = 0.0
+        self._supervisor_cooldown_until = 0.0
         self._policy_supervisor = PolicySupervisor()
         self._policy_selection_key = "auto"
         self._last_auto_route_signature: tuple[str, str] | None = None
@@ -319,6 +326,11 @@ class MuJoCoEngine:
         self._policy_supervisor.request_id = None
         self._policy_supervisor.request_manifest = None
         self._policy_supervisor.requested_at = None
+        self._safety_pose_active = False
+        self._safety_pose_started_at = 0.0
+        self._safety_pose_start_qpos = None
+        self._safety_pose_hold_qpos = None
+        self._supervisor_cooldown_until = 0.0
         self._policy_supervisor.risk = self._policy_supervisor.risk.__class__(0.0, 0.0, 0.0, 2, False)
         self._policy_supervisor.route = self._policy_supervisor.route.__class__(
             "flat / nominal terrain", "flat", "Flat-ground walker", 0.94, False,
@@ -600,6 +612,10 @@ class MuJoCoEngine:
                         and not any(abs(item) > 1.0e-6 for item in self._command)
                     ),
                     "stand_lock_max_settlement_m": 0.08,
+                    "safety_pose": self._safety_pose_status(),
+                    "failure_detector_cooldown_s": max(
+                        0.0, self._supervisor_cooldown_until - float(self.data.time)
+                    ),
                     "cheat_speed_m_s": self._cheat_speed_m_s,
                     "cheat_yaw_rate_rad_s": self._cheat_yaw_rate_rad_s,
                 },
@@ -627,8 +643,8 @@ class MuJoCoEngine:
         # GIL; the simulation thread observes the new values at its next
         # MuJoCo substep. Snapshot publication remains on the main state lock.
         if action == "pause":
-            if not bool(value) and self._policy_supervisor.stage == "waiting_checkpoint":
-                raise ValueError("safe hold is waiting for a compatible checkpoint or reset")
+            if self._safety_pose_active:
+                raise ValueError("active safety posture keeps physics live")
             self._paused = bool(value)
             return
         if action == "command" and isinstance(value, (list, tuple)) and len(value) == 3:
@@ -637,7 +653,7 @@ class MuJoCoEngine:
                 self._policy_supervisor.stage == "waiting_checkpoint"
                 and any(abs(item) > 1.0e-9 for item in command)
             ):
-                raise ValueError("safe hold is waiting for a compatible checkpoint or reset")
+                raise ValueError("safety posture is waiting for a compatible checkpoint or reset")
             if (
                 not self._cheat_mode
                 and not self._weather_parameters()["movement_allowed"]
@@ -647,6 +663,8 @@ class MuJoCoEngine:
             self._command = command
             if any(abs(item) > 1.0e-6 for item in command):
                 self._stand_lock_enabled = False
+                if self._policy_supervisor.stage == "policy_active":
+                    self._supervisor_cooldown_until = float(self.data.time) + 1.0
             return
 
         with self._lock:
@@ -659,10 +677,14 @@ class MuJoCoEngine:
                 # and pause in one request avoids browser frame polling racing
                 # the two state changes and leaving the engine paused.
                 if self._policy_supervisor.stage == "waiting_checkpoint":
-                    raise ValueError("safe hold is waiting for a compatible checkpoint or reset")
+                    self._command = (0.0, 0.0, 0.0)
+                    self._paused = False
+                    self._publish_snapshot()
+                    return
                 if not self._weather_parameters()["movement_allowed"]:
                     raise ValueError("Movement is disabled by the active weather risk gate")
                 self._command = (-0.1, 0.0, 0.0)
+                self._supervisor_cooldown_until = float(self.data.time) + 1.0
                 self._manual_force_mode = False
                 self._paused = False
                 self._publish_snapshot()
@@ -776,7 +798,7 @@ class MuJoCoEngine:
             elif action == "cheat_mode":
                 enabled = bool(value)
                 if enabled and self._policy_supervisor.stage == "waiting_checkpoint":
-                    raise ValueError("safe hold is waiting for a compatible checkpoint or reset")
+                    raise ValueError("safety posture is waiting for a compatible checkpoint or reset")
                 if enabled != self._cheat_mode:
                     if enabled:
                         self._stand_lock_enabled = False
@@ -797,13 +819,15 @@ class MuJoCoEngine:
                 self._publish_snapshot()
             elif action == "manual_force_mode":
                 if bool(value) and self._policy_supervisor.stage == "waiting_checkpoint":
-                    raise ValueError("safe hold is waiting for a compatible checkpoint or reset")
+                    raise ValueError("safety posture is waiting for a compatible checkpoint or reset")
                 self._manual_force_mode = bool(value)
                 if self._manual_force_mode:
                     self._stand_lock_enabled = False
                 self._command = (0.0, 0.0, 0.0)
                 self._publish_snapshot()
             elif action == "policy_select":
+                if self._policy_supervisor.stage == "waiting_checkpoint":
+                    raise ValueError("safety posture is waiting for a compatible checkpoint or reset")
                 key = str(value or "").strip()
                 if key == "auto":
                     self._policy_selection_key = key
@@ -830,6 +854,7 @@ class MuJoCoEngine:
                     self._policy_supervisor.activate_policy(
                         "flat", "Flat-ground walker", checkpoint, sim_time=float(self.data.time)
                     )
+                    self._supervisor_cooldown_until = float(self.data.time) + 1.0
                 elif key in {"ice_incline", "wind", "rough"}:
                     self._policy_selection_key = key
                     self._return_demo_pretrained(key)
@@ -867,12 +892,17 @@ class MuJoCoEngine:
                 policy = G1VelocityPolicy(path)
                 policy.configure_mujoco_actuators(self.model)
                 self._policy = policy
+                self._safety_pose_active = False
+                self._safety_pose_start_qpos = None
+                self._safety_pose_hold_qpos = None
+                self._hold_joint_qpos = np.asarray(self.data.qpos[7:], dtype=np.float64).copy()
                 self._policy_selection_key = key
                 self._policy_supervisor.activate_policy(
                     key, label, str(path), sim_time=float(self.data.time), demo_pretrained=False
                 )
+                self._supervisor_cooldown_until = float(self.data.time) + 1.0
                 self._paused = False
-                self._stand_lock_enabled = True
+                self._stand_lock_enabled = False
                 self._publish_snapshot()
             elif action == "subset_preview":
                 self._subset_preview_enabled = bool(value)
@@ -1148,18 +1178,21 @@ class MuJoCoEngine:
     def _enter_safe_wait_and_request_training(self, reason: str) -> None:
         if self._policy_supervisor.stage == "waiting_checkpoint":
             return
+        request_id, manifest = self._capture_retrain_subset()
         self._command = (0.0, 0.0, 0.0)
         self._manual_force_mode = False
         self._cheat_mode = False
-        self._stand_lock_enabled = True
-        self._stand_lock_xy = np.asarray(self.data.qpos[:2], dtype=np.float64).copy()
-        self._stand_lock_quat = np.asarray(self.data.qpos[3:7], dtype=np.float64).copy()
-        self._stand_lock_min_z = float(self.data.qpos[2] - 0.08)
-        self.data.qvel[:] = 0.0
-        self.data.qacc[:] = 0.0
-        self._paused = True
-        request_id, manifest = self._capture_retrain_subset()
-        self._policy_supervisor.log("SAFE HOLD", reason, sim_time=float(self.data.time))
+        self._stand_lock_enabled = False
+        self._safety_pose_active = True
+        self._safety_pose_started_at = float(self.data.time)
+        self._safety_pose_start_qpos = np.asarray(self.data.qpos[7:], dtype=np.float64).copy()
+        self._safety_pose_hold_qpos = None
+        self._paused = False
+        self._policy_supervisor.log(
+            "SAFETY POSTURE",
+            f"{reason} Physics remains live; commanding a low four-point protective stance.",
+            sim_time=float(self.data.time),
+        )
         self._policy_supervisor.request_training(request_id, manifest, sim_time=float(self.data.time))
         self._subset_preview_enabled = True
 
@@ -1170,6 +1203,10 @@ class MuJoCoEngine:
         policy = G1VelocityPolicy(spec["checkpoint"])
         policy.configure_mujoco_actuators(self.model)
         self._policy = policy
+        self._safety_pose_active = False
+        self._safety_pose_start_qpos = None
+        self._safety_pose_hold_qpos = None
+        self._hold_joint_qpos = np.asarray(self.data.qpos[7:], dtype=np.float64).copy()
         self._policy_supervisor.activate_policy(
             key,
             str(spec["label"]),
@@ -1178,7 +1215,129 @@ class MuJoCoEngine:
             demo_pretrained=True,
         )
         self._paused = False
-        self._stand_lock_enabled = True
+        self._stand_lock_enabled = False
+        self._supervisor_cooldown_until = float(self.data.time) + 1.0
+
+    def _four_point_safety_target(self, *, aggressive: bool) -> np.ndarray:
+        """Port humanoid_climber's deterministic hands-and-feet safety pose."""
+        if self._policy is None:
+            target = np.asarray(self.data.qpos[7:], dtype=np.float64).copy()
+            names = [
+                mujoco.mj_id2name(
+                    self.model,
+                    mujoco.mjtObj.mjOBJ_JOINT,
+                    int(self.model.actuator_trnid[index, 0]),
+                ) or ""
+                for index in range(self.model.nu)
+            ]
+        else:
+            target = np.asarray(self._policy.default_joint_pos, dtype=np.float64).copy()
+            names = list(self._policy.joint_names)
+        for index, name in enumerate(names):
+            if "hip_pitch" in name:
+                target[index] = -0.75 if aggressive else -0.65
+            elif "knee" in name:
+                target[index] = 1.30 if aggressive else 1.15
+            elif "ankle_pitch" in name:
+                target[index] = -0.55 if aggressive else -0.50
+            elif name == "left_hip_roll_joint":
+                target[index] = 0.15
+            elif name == "right_hip_roll_joint":
+                target[index] = -0.15
+            elif "hip_yaw" in name or "ankle_roll" in name:
+                target[index] = 0.0
+            elif name == "waist_pitch_joint":
+                target[index] = 0.48 if aggressive else 0.45
+            elif "waist_roll" in name or "waist_yaw" in name:
+                target[index] = 0.0
+            elif "shoulder_pitch" in name:
+                # In the Menagerie G1 coordinate frame, a modest negative
+                # shoulder pitch swings the forearms forward/down. The old
+                # -1.55 value folded the arms backward and left the robot
+                # sprawled on its back instead of bracing on its hands.
+                target[index] = -0.45
+            elif name == "left_shoulder_roll_joint":
+                target[index] = 0.25
+            elif name == "right_shoulder_roll_joint":
+                target[index] = -0.25
+            elif "shoulder_yaw" in name:
+                target[index] = 0.0
+            elif "elbow" in name:
+                target[index] = 1.50
+            elif "wrist_pitch" in name:
+                target[index] = -0.45
+            elif "wrist_roll" in name or "wrist_yaw" in name:
+                target[index] = 0.0
+        return np.clip(
+            target,
+            self.model.actuator_ctrlrange[:, 0],
+            self.model.actuator_ctrlrange[:, 1],
+        )
+
+    def _safety_pose_control(self) -> np.ndarray:
+        start = (
+            self._safety_pose_start_qpos
+            if self._safety_pose_start_qpos is not None
+            else np.asarray(self.data.qpos[7:], dtype=np.float64)
+        )
+        elapsed = max(0.0, float(self.data.time) - self._safety_pose_started_at)
+        if elapsed >= 1.0:
+            # Once contact has arrested the incident, stop chasing an idealized
+            # kinematic target that may be infeasible on the local slope. Hold
+            # the achieved joint configuration and let live contacts carry it.
+            if self._safety_pose_hold_qpos is None:
+                self._safety_pose_hold_qpos = np.asarray(
+                    self.data.qpos[7:], dtype=np.float64
+                ).copy()
+            return np.clip(
+                self._safety_pose_hold_qpos,
+                self.model.actuator_ctrlrange[:, 0],
+                self.model.actuator_ctrlrange[:, 1],
+            )
+        aggressive = self._four_point_safety_target(aggressive=True)
+        sustained = self._four_point_safety_target(aggressive=False)
+        if elapsed < self._safety_pose_attack_seconds:
+            alpha = elapsed / max(self._safety_pose_attack_seconds, 1.0e-6)
+            return (1.0 - alpha) * start + alpha * aggressive
+        alpha = min(
+            1.0,
+            (elapsed - self._safety_pose_attack_seconds)
+            / max(self._safety_pose_settle_seconds - self._safety_pose_attack_seconds, 1.0e-6),
+        )
+        return (1.0 - alpha) * aggressive + alpha * sustained
+
+    def _ground_support_bodies(self) -> list[str]:
+        floor = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "floor")
+        bodies: set[str] = set()
+        for contact_id in range(self.data.ncon):
+            contact = self.data.contact[contact_id]
+            geoms = (int(contact.geom1), int(contact.geom2))
+            if floor not in geoms:
+                continue
+            other = geoms[1] if geoms[0] == floor else geoms[0]
+            body = int(self.model.geom_bodyid[other])
+            name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body)
+            if name:
+                bodies.add(name)
+        return sorted(bodies)
+
+    def _safety_pose_status(self) -> dict[str, Any]:
+        elapsed = max(0.0, float(self.data.time) - self._safety_pose_started_at)
+        return {
+            "active": self._safety_pose_active,
+            "kind": "four_point_protective_stance",
+            "physics_live": self._safety_pose_active and not self._paused,
+            "elapsed_s": elapsed if self._safety_pose_active else 0.0,
+            "transition_progress": (
+                min(1.0, elapsed / max(self._safety_pose_settle_seconds, 1.0e-6))
+                if self._safety_pose_active else 0.0
+            ),
+            "phase": (
+                "stabilizing" if self._safety_pose_active and elapsed < 1.0
+                else "contact_hold" if self._safety_pose_active else "inactive"
+            ),
+            "support_bodies": self._ground_support_bodies() if self._safety_pose_active else [],
+        }
 
     def _log_auto_route_execution(self) -> None:
         if self._policy_selection_key != "auto":
@@ -1625,7 +1784,9 @@ class MuJoCoEngine:
             return
         while self.data.time + self.model.opt.timestep * 0.5 < target:
             moving_command = any(abs(item) > 1.0e-6 for item in self._command)
-            if (
+            if self._safety_pose_active:
+                self.data.ctrl[:] = self._safety_pose_control()
+            elif (
                 self._policy is not None
                 and moving_command
                 and not self._manual_force_mode
@@ -1676,6 +1837,13 @@ class MuJoCoEngine:
                 direction = self._wind_direction_deg * np.pi / 180.0
                 self.data.xfrc_applied[pelvis, 0] = -self._wind_force_n * np.sin(direction)
                 self.data.xfrc_applied[pelvis, 1] = -self._wind_force_n * np.cos(direction)
+            if self._safety_pose_active:
+                pelvis = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
+                # Dampen planar/rotational momentum while the joint controller
+                # moves into the protective pose. Position and orientation
+                # remain physically unconstrained so gravity and contacts stay live.
+                self.data.xfrc_applied[pelvis, :2] -= np.asarray(self.data.qvel[:2]) * 90.0
+                self.data.xfrc_applied[pelvis, 3:6] -= np.asarray(self.data.qvel[3:6]) * 18.0
             if self._manual_force_mode:
                 pelvis = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
                 yaw = self._yaw_from_quaternion_wxyz(self.data.xquat[pelvis])
@@ -1687,7 +1855,10 @@ class MuJoCoEngine:
                 self.data.xfrc_applied[pelvis, :2] -= np.asarray(self.data.qvel[:2]) * 42.0
                 self.data.xfrc_applied[pelvis, 5] -= float(self.data.qvel[5]) * 7.0
             mujoco.mj_step(self.model, self.data)
-            if self.data.time + 1.0e-9 >= self._next_supervisor_time:
+            if (
+                self.data.time + 1.0e-9 >= self._next_supervisor_time
+                and self.data.time >= self._supervisor_cooldown_until
+            ):
                 risk = self._measure_failure_risk()
                 confirmed = self._policy_supervisor.observe(
                     risk,

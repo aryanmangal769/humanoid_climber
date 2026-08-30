@@ -125,7 +125,7 @@ async def main() -> None:
                 if state.get("surface") == "snow" and state.get("newton", {}).get("active"):
                     break
 
-            # Exercise the operator-facing failure -> safe hold -> checkpoint
+            # Exercise the operator-facing failure -> active safety posture -> checkpoint
             # lifecycle over the same WebSocket Unity uses.  The bridge starts
             # with DEFAULT_SNOW, so the captured subset must be a live Newton
             # multilayer window rather than the rigid fallback.
@@ -142,9 +142,25 @@ async def main() -> None:
                         waiting = candidate
                 elif message.get("type") == "subset_view":
                     subset = message["data"]
-            assert waiting is not None, "demo failure did not enter safe wait"
-            assert waiting.get("paused") is True
+            assert waiting is not None, "demo failure did not enter safety posture"
+            assert waiting.get("paused") is False
             assert waiting["policy"]["selected_policy_key"] == "auto"
+            safety = waiting.get("simulation_settings", {}).get("safety_pose", {})
+            assert safety.get("active") is True, safety
+            assert safety.get("physics_live") is True, safety
+            safety_start_time = float(waiting["sim_time"])
+            deadline = time.monotonic() + 8.0
+            while time.monotonic() < deadline:
+                candidate = await recv_until(ws, "state", timeout=3.0)
+                safety = candidate.get("simulation_settings", {}).get("safety_pose", {})
+                if (
+                    float(candidate["sim_time"]) >= safety_start_time + 0.5
+                    and float(safety.get("transition_progress", 0.0)) >= 1.0
+                ):
+                    waiting = candidate
+                    break
+            else:
+                raise AssertionError("safety posture did not keep physics advancing")
             supervisor = waiting["policy"]["supervisor"]
             manifest_path = Path(supervisor["request_manifest"])
             manifest = json.loads(manifest_path.read_text())
@@ -155,12 +171,13 @@ async def main() -> None:
             assert terrain.get("mpm", {}).get("solver"), terrain
             assert subset and subset.get("encoding") == "jpeg/base64"
 
-            held_run = await control(ws, "play", expected_ok=False)
-            assert "safe hold" in held_run.get("message", "").lower(), held_run
+            await control(ws, "play")
+            held_pause = await control(ws, "pause", True, expected_ok=False)
+            assert "physics live" in held_pause.get("message", "").lower(), held_pause
             held_manual = await control(ws, "manual_force_mode", True, expected_ok=False)
-            assert "safe hold" in held_manual.get("message", "").lower(), held_manual
+            assert "safe" in held_manual.get("message", "").lower(), held_manual
             held_command = await control(ws, "command", [1.0, 0.0, 0.0], expected_ok=False)
-            assert "safe hold" in held_command.get("message", "").lower(), held_command
+            assert "safe" in held_command.get("message", "").lower(), held_command
 
             bad_return = await control(ws, "checkpoint_return", {
                 "key": "ice_incline",
