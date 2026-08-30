@@ -32,10 +32,11 @@ async def recv_until(ws, wanted: str, timeout: float = 10.0):
     raise TimeoutError(wanted)
 
 
-async def control(ws, action, value):
+async def control(ws, action, value, *, expected_ok=True):
     await ws.send(json.dumps({"type": "control", "action": action, "value": value}))
     ack = await recv_until(ws, "control_ack")
-    assert ack.get("ok"), ack
+    assert bool(ack.get("ok")) is expected_ok, ack
+    return ack
 
 
 async def main() -> None:
@@ -84,13 +85,10 @@ async def main() -> None:
                     snow_frame = message["data"]
             assert abs(float(snow_frame["size"][0]) - 3.0) < 1e-5, snow_frame["size"]
 
-            await control(ws, "mode", "live")
-            while True:
-                state = await recv_until(ws, "state")
-                if state.get("data_mode") == "live":
-                    break
-
-            await control(ws, "mode", "sim")
+            ack = await control(ws, "mode", "live", expected_ok=False)
+            assert ack.get("code") == "live_not_configured", ack
+            state = await recv_until(ws, "state")
+            assert state.get("data_mode") == "sim", state
             await control(ws, "surface", "ice")
             await control(ws, "surface_friction", 0.12)
             while True:

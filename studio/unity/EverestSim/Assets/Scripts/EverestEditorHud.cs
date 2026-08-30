@@ -102,7 +102,7 @@ namespace EverestSim
         private float _physicsRadius = 1.25f;
         private float _mpmVoxelSize = 0.10f;
         private int _physicsDetailCells = 24;
-        private float _mpmCouplingHz = 5f;
+        private float _mpmCouplingHz = 3f;
         private float _mpmContactRefineRadius = 0.55f;
         private int _mpmCoarseStride = 4;
         private float _patchRecenter = 0.70f;
@@ -400,10 +400,13 @@ namespace EverestSim
 
             var paused = _runtime == null || _runtime.Paused;
             var playLabel = veryNarrow ? (paused ? "▶" : "Ⅱ") : paused ? "▶ RUN" : "Ⅱ PAUSE";
+            var controlsEnabled = GUI.enabled;
+            GUI.enabled = controlsEnabled && _dataMode == "sim";
             if (GUILayout.Button(playLabel, paused ? _buttonActive : _button, GUILayout.Width(veryNarrow ? 34f : compact ? 62f : 68f)))
                 _backend.SendPause(!paused);
             if (GUILayout.Button(veryNarrow ? "↺" : "RESET SIM", _button, GUILayout.Width(veryNarrow ? 34f : compact ? 58f : 68f)))
                 _backend.SendReset();
+            GUI.enabled = controlsEnabled;
 
             GUILayout.FlexibleSpace();
             if (!narrow)
@@ -416,12 +419,14 @@ namespace EverestSim
 
             if (!compact)
             {
+                GUI.enabled = controlsEnabled && _dataMode == "sim";
                 var manual = _runtime != null && _runtime.ManualControlEnabled;
                 if (GUILayout.Button(manual ? "CONTROL ON" : "CONTROL", manual ? _buttonActive : _button, GUILayout.Width(76f)))
                     _runtime?.SetManualControl(!manual);
                 var cheat = _runtime != null && _runtime.CheatModeEnabled;
                 if (GUILayout.Button(cheat ? "CHEAT ON" : "CHEAT", cheat ? _buttonDanger : _button, GUILayout.Width(66f)))
                     _runtime?.SetCheatMode(!cheat);
+                GUI.enabled = controlsEnabled;
             }
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
@@ -456,7 +461,8 @@ namespace EverestSim
             GUILayout.Space(4f);
             if (_dataMode != "sim")
             {
-                GUILayout.Label("LIVE channel is armed. Switch to SIM to edit forcing locally.", _muted);
+                DrawLiveSourceSummary();
+                GUILayout.Label("READ ONLY · live telemetry cannot mutate the simulator or arm robot control.", _muted);
                 EndSection();
                 return;
             }
@@ -494,10 +500,12 @@ namespace EverestSim
         private void DrawPhysicsWindowSection()
         {
             BeginSection("PHYSICS WINDOW");
+            var wasEnabled = GUI.enabled;
+            GUI.enabled = wasEnabled && _dataMode == "sim";
             Slider("Radius", ref _physicsRadius, 0.75f, 6f, "0.00", "m");
             Slider("Min voxel", ref _mpmVoxelSize, 0.05f, 0.25f, "0.000", "m");
             SliderInt("Target cells", ref _physicsDetailCells, 24, 96);
-            Slider("MPM coupling", ref _mpmCouplingHz, 5f, 30f, "0", "Hz");
+            Slider("MPM coupling", ref _mpmCouplingHz, 2f, 30f, "0", "Hz");
             Slider("Contact refine", ref _mpmContactRefineRadius, 0.30f, 1.25f, "0.00", "m");
             SliderInt("Coarse stride", ref _mpmCoarseStride, 1, 4);
             Slider("Recenter", ref _patchRecenter, 0.25f, 0.75f, "0.00", "× radius");
@@ -522,12 +530,15 @@ namespace EverestSim
             GUILayout.Label(voxel.HasValue ? $"voxel {voxel.Value:0.000} m · terrain conforming" : "rigid surface / no MPM", _tiny);
             GUILayout.EndVertical();
             GUILayout.Label("Only this moving window is high-cost Newton MPM. The surrounding snow/ice/rock shell is visual DEM LOD.", _muted);
+            GUI.enabled = wasEnabled;
             EndSection();
         }
 
         private void DrawMaterialSection()
         {
             BeginSection("TERRAIN MATERIAL");
+            var wasEnabled = GUI.enabled;
+            GUI.enabled = wasEnabled && _dataMode == "sim";
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("SNOW / MPM", _surface == "snow" ? _buttonActive : _button)) SetSurface("snow");
             if (GUILayout.Button("RIGID ICE", _surface == "ice" ? _buttonActive : _button)) SetSurface("ice");
@@ -543,6 +554,7 @@ namespace EverestSim
                     _backend.SendSurfaceFriction(_iceFriction);
                 }
                 GUILayout.Label("Ice uses the authoritative DEM collider with backend friction. The local active surface is rendered from the same sampled heightfield.", _muted);
+                GUI.enabled = wasEnabled;
                 EndSection();
                 return;
             }
@@ -556,6 +568,7 @@ namespace EverestSim
                     _backend.SendSurfaceFriction(_rockFriction);
                 }
                 GUILayout.Label("Bare rock is rigid MuJoCo DEM contact; no fake deformable rock layer is created in Unity.", _muted);
+                GUI.enabled = wasEnabled;
                 EndSection();
                 return;
             }
@@ -592,6 +605,7 @@ namespace EverestSim
             Slider("Hardening", ref layer.Hardening, 0f, 40f, "0.0", "");
             LogSlider("Bond below", ref layer.Bond, 500f, 5000000f, "Pa");
             if (GUILayout.Button("APPLY LAYERS TO NEWTON", _buttonActive)) ApplySnow();
+            GUI.enabled = wasEnabled;
             EndSection();
         }
 
@@ -612,6 +626,8 @@ namespace EverestSim
         private void DrawControlSection()
         {
             BeginSection("ROBOT / CAMERA");
+            var wasEnabled = GUI.enabled;
+            GUI.enabled = wasEnabled && _dataMode == "sim";
             var manual = _runtime != null && _runtime.ManualControlEnabled;
             var cheat = _runtime != null && _runtime.CheatModeEnabled;
             GUILayout.BeginHorizontal();
@@ -626,6 +642,8 @@ namespace EverestSim
             GUILayout.Label(cheat
                 ? "NON-PHYSICAL: A/D strafe · S/F move · Q/E yaw. Newton window follows the transported robot."
                 : "Force control: W/S nudge · A/D turn · Space stop. MuJoCo + Newton remain authoritative.", cheat ? _warn : _muted);
+
+            GUI.enabled = wasEnabled;
 
             GUILayout.Space(5f);
             GUILayout.Label("CAMERA", _sectionTitle);
@@ -697,8 +715,17 @@ namespace EverestSim
                 narrow ? (_backend.Connected ? "●" : "○") : (_backend.Connected ? "● BACKEND" : "○ OFFLINE"),
                 _backend.Connected ? _good : _warn,
                 GUILayout.Width(narrow ? 18f : 70f));
-            GUILayout.Label($"SIM {simTime:0.00}s", _tiny, GUILayout.Width(narrow ? 58f : 66f));
+            var source = state?["source"] as JObject;
+            var sourceStatus = source?.Value<string>("status") ?? "disconnected";
+            var sourceKind = source?.Value<string>("kind") ?? "unknown";
+            var ageMs = source?.Value<float?>("age_ms");
+            var modeLabel = _dataMode == "live"
+                ? $"LIVE {sourceStatus.ToUpperInvariant()}"
+                : $"SIM {simTime:0.00}s";
+            GUILayout.Label(modeLabel, sourceStatus == "connected" ? _tiny : _warn, GUILayout.Width(narrow ? 92f : 124f));
             GUILayout.Label(_surface.ToUpperInvariant(), _tiny, GUILayout.Width(narrow ? 42f : 48f));
+            if (_dataMode == "live" && !compact)
+                GUILayout.Label($"{sourceKind} · {(ageMs.HasValue ? ageMs.Value.ToString("0") + " ms" : "no robot sample")} · READ ONLY", _tiny, GUILayout.Width(230f));
             if (!compact && _snow != null && _snow.Sequence >= 0)
                 GUILayout.Label($"{_snow.LayerCount} layers · comp {_snow.MaxCompaction:P0}", _tiny, GUILayout.Width(120f));
             GUILayout.FlexibleSpace();
@@ -716,6 +743,37 @@ namespace EverestSim
             }
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
+        }
+
+        private void DrawLiveSourceSummary()
+        {
+            var source = _backend.LatestState?["source"] as JObject;
+            if (source == null)
+            {
+                GUILayout.Label("LIVE DISCONNECTED · source metadata pending", _warn);
+                return;
+            }
+            var status = source.Value<string>("status") ?? "disconnected";
+            var kind = source.Value<string>("kind") ?? "unknown";
+            var name = source.Value<string>("name") ?? kind;
+            var age = source.Value<float?>("age_ms");
+            GUILayout.Label(
+                $"LIVE {status.ToUpperInvariant()} · {name} · {(age.HasValue ? age.Value.ToString("0") + " ms" : "no robot sample")}",
+                status == "connected" ? _good : _warn);
+            var channels = source["channels"] as JObject;
+            if (channels == null) return;
+            foreach (var channelName in new[] { "robot", "weather", "terrain", "snow", "sensors" })
+            {
+                var channel = channels[channelName] as JObject;
+                var channelStatus = channel?.Value<string>("status") ?? "unavailable";
+                if (channelStatus == "connected") continue;
+                GUILayout.Label($"{channelName.ToUpperInvariant()} {channelStatus.ToUpperInvariant()}", _warn);
+            }
+            var robot = channels["robot"] as JObject;
+            var missingBodies = robot?["missing_bodies"] as JArray;
+            var missingJoints = robot?["missing_joints"] as JArray;
+            if ((missingBodies?.Count ?? 0) > 0 || (missingJoints?.Count ?? 0) > 0)
+                GUILayout.Label($"INCOMPLETE ROBOT LAYOUT · {missingBodies?.Count ?? 0} bodies · {missingJoints?.Count ?? 0} joints missing", _warn);
         }
 
         private void ApplyWeatherPreset(string preset)
@@ -806,14 +864,19 @@ namespace EverestSim
         private void SetDataMode(string mode)
         {
             if (_dataMode == mode) return;
-            _dataMode = mode;
             _backend.SendMode(mode);
         }
 
         private void SyncDraftFromBackendOnce()
         {
-            if (_draftInitialized) return;
             var state = _backend.LatestState;
+            if (state != null)
+            {
+                var backendMode = state.Value<string>("data_mode") ?? _dataMode;
+                if (_dataMode == "live" && backendMode == "sim") _draftInitialized = false;
+                _dataMode = backendMode;
+            }
+            if (_draftInitialized) return;
             if (state != null)
             {
                 _dataMode = state.Value<string>("data_mode") ?? _dataMode;
@@ -875,7 +938,9 @@ namespace EverestSim
                 }
                 _surfaceFriction = snow.Value<float?>("surface_friction") ?? _surfaceFriction;
             }
-            _draftInitialized = state != null && env != null && snow != null;
+            _draftInitialized = state != null && env != null && snow != null
+                && (env.Value<string>("data_mode") ?? _dataMode) == _dataMode
+                && (snow.Value<string>("data_mode") ?? _dataMode) == _dataMode;
         }
 
         private void DrawFeet(JObject feet)

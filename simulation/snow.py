@@ -65,6 +65,12 @@ class SnowColumnLayer:
             0.65,
             max(0.05, 0.08 + 0.35 * self.shear_strength_pa / max(self.compressive_strength_pa, 1.0)),
         )
+        # Newton's fully coupled dilatancy solve is useful for offline
+        # calibration but currently halves the interactive GPU stream rate.
+        # Keep the attribute explicit and disabled in the realtime preset;
+        # APIC still preserves lateral material flow. A future fidelity preset
+        # can opt into calibrated per-layer values deliberately.
+        dilatancy = 0.0
         return {
             "mpm:young_modulus": self.stiffness_pa,
             "mpm:poisson_ratio": 0.30,
@@ -74,6 +80,8 @@ class SnowColumnLayer:
             "mpm:yield_pressure": self.compressive_strength_pa,
             "mpm:tensile_yield_ratio": tensile_ratio,
             "mpm:yield_stress": self.shear_strength_pa,
+            # Explicit realtime value; see the performance note above.
+            "mpm:dilatancy": dilatancy,
         }
 
     def manifest(self, index: int) -> dict[str, Any]:
@@ -285,6 +293,10 @@ class SnowLayer:
             "tensile_yield_ratio": (
                 self.column.layers[0].newton_attributes()["mpm:tensile_yield_ratio"]
                 if self.column else 0.05
+            ),
+            "dilatancy": (
+                self.column.layers[0].newton_attributes()["mpm:dilatancy"]
+                if self.column else 0.0
             ),
         }
         return result

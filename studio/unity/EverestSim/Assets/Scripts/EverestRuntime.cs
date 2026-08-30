@@ -19,10 +19,12 @@ namespace EverestSim
         private float _nextCommandTime;
         private bool _uiInputBlockedLastFrame;
         private bool _paused = true;
+        private string _dataMode = "sim";
 
         public bool ManualControlEnabled { get; private set; }
         public bool CheatModeEnabled { get; private set; }
         public bool Paused => _paused;
+        public bool LiveReadOnly => _dataMode == "live";
         public EverestCameraController CameraController => _camera;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
@@ -66,6 +68,7 @@ namespace EverestSim
 
         public void SetManualControl(bool enabled)
         {
+            if (LiveReadOnly) return;
             ManualControlEnabled = enabled;
             _backend?.SendManualForceMode(enabled);
             if (enabled) _backend?.SendPause(false);
@@ -76,6 +79,7 @@ namespace EverestSim
 
         public void SetCheatMode(bool enabled)
         {
+            if (LiveReadOnly) return;
             CheatModeEnabled = enabled;
             if (enabled) _backend?.SendManualForceMode(false);
             if (enabled) ManualControlEnabled = true;
@@ -87,6 +91,21 @@ namespace EverestSim
 
         private void OnState(JObject state)
         {
+            var nextMode = state.Value<string>("data_mode") ?? _dataMode;
+            if (nextMode == "live" && _dataMode != "live")
+            {
+                ManualControlEnabled = false;
+                CheatModeEnabled = false;
+                _lastCommand = Vector3.zero;
+            }
+            _dataMode = nextMode;
+            var source = state["source"] as JObject;
+            if (source != null)
+            {
+                var epoch = source.Value<long?>("epoch") ?? -1;
+                _robot?.SetSourceEpoch(epoch);
+                _snow?.SetSourceEpoch(epoch);
+            }
             _paused = state.Value<bool?>("paused") ?? _paused;
             CheatModeEnabled = state.Value<bool?>("cheat_mode") ?? CheatModeEnabled;
         }
@@ -113,6 +132,8 @@ namespace EverestSim
                 return;
             }
             _uiInputBlockedLastFrame = false;
+
+            if (LiveReadOnly) return;
 
             if (Input.GetKeyDown(KeyCode.P))
                 _backend.SendPause(!_paused);

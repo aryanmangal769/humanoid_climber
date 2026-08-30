@@ -16,6 +16,12 @@ upstream: https://github.com/google-deepmind/mujoco_menagerie/tree/main/unitree_
 
 No hardware connection or robot-control path is part of this phase.
 
+The Unity bridge now has a read-only LIVE telemetry path for replay fixtures,
+atomic JSON snapshots, local UDP sensor gateways, and optional Open-Meteo
+weather. LIVE never falls back to simulated robot/snow frames and never grants
+hardware control. See `docs/UNITY_RENDERER_BRIDGE_PROTOCOL.md` for the channel
+schema and `scripts/verify_live_mode.py` for the hardware-free end-to-end test.
+
 ## Setup
 
 ```bash

@@ -19,11 +19,26 @@ namespace EverestSim
         private readonly Dictionary<string, BodyTarget> _bodies = new Dictionary<string, BodyTarget>();
         private Transform _root;
         private long _sequence = -1;
+        private long _sourceEpoch = -1;
 
         public float InterpolationSharpness = 28f;
         public JObject LatestFeet { get; private set; }
         public double SimTime { get; private set; }
         public long Sequence => _sequence;
+
+        public void SetSourceEpoch(long epoch)
+        {
+            if (epoch == _sourceEpoch) return;
+            _sourceEpoch = epoch;
+            _sequence = -1;
+            // The next source sample must snap. Interpolating from a simulated
+            // pose into unrelated physical/replay telemetry is misleading.
+            foreach (var body in _bodies.Values)
+            {
+                body.HasPose = false;
+                body.Transform.gameObject.SetActive(false);
+            }
+        }
 
         private void Awake()
         {
@@ -105,6 +120,7 @@ namespace EverestSim
 
         public void OnFrame(JObject frame)
         {
+            SetSourceEpoch(frame.Value<long?>("source_epoch") ?? _sourceEpoch);
             var sequence = frame.Value<long?>("sequence") ?? -1;
             if (sequence <= _sequence) return;
             _sequence = sequence;
@@ -122,6 +138,7 @@ namespace EverestSim
                 var name = names[i].Value<string>();
                 if (string.IsNullOrWhiteSpace(name)) continue;
                 if (!_bodies.TryGetValue(name, out var body)) body = CreateBody(name);
+                body.Transform.gameObject.SetActive(true);
                 body.Position = EverestCoordinates.Position(positions[i]);
                 body.Rotation = EverestCoordinates.RotationWxyz(rotations[i]);
                 if (!body.HasPose)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -15,7 +16,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SCREENSHOT = ROOT / ".everest-browser-ready.png"
 PROFILE = ROOT / ".everest-chrome-profile"
 PORT = 9223
-URL = "http://127.0.0.1:18888/?build=20260830-0231"
+URL = os.environ.get(
+    "EVEREST_BROWSER_URL",
+    "http://127.0.0.1:18888/?build=20260830-0231",
+)
+BACKEND_URL = os.environ.get("EVEREST_CAPTURE_BACKEND")
+CAPTURE_WEATHER = os.environ.get("EVEREST_CAPTURE_WEATHER", "").strip().lower()
 
 
 def launch() -> subprocess.Popen[str]:
@@ -88,7 +94,56 @@ async def capture(ws_url: str) -> None:
         if not ready:
             raise RuntimeError("Unity loading overlay never completed")
 
-        await asyncio.sleep(7.0)
+        if BACKEND_URL:
+            async with websockets.connect(
+                BACKEND_URL,
+                max_size=16 * 1024 * 1024,
+                compression=None,
+            ) as backend:
+                initial_time = None
+                while initial_time is None:
+                    message = json.loads(await asyncio.wait_for(backend.recv(), timeout=20.0))
+                    if message.get("type") == "state":
+                        initial_time = float(message["data"]["sim_time"])
+                if CAPTURE_WEATHER in {"storm", "whiteout"}:
+                    whiteout = CAPTURE_WEATHER == "whiteout"
+                    await backend.send(json.dumps({
+                        "type": "control",
+                        "action": "weather",
+                        "value": {
+                            "temperature_c": -19.0 if whiteout else -22.0,
+                            "wind_speed_m_s": 15.0 if whiteout else 24.0,
+                            "wind_direction_deg": 250.0,
+                            "snowfall_mm_h": 45.0 if whiteout else 22.0,
+                            "visibility_scale": 0.10 if whiteout else 0.38,
+                            "cloud_density": 0.86 if whiteout else 0.68,
+                            "cloud_coverage": 0.96 if whiteout else 0.86,
+                            "cloud_radius_m": 170.0,
+                            "cloud_altitude_m": 18.0 if whiteout else 26.0,
+                            "cloud_thickness_m": 72.0 if whiteout else 54.0,
+                            "cloud_speed": 0.40,
+                            "cloud_quality": 0.72 if whiteout else 0.68,
+                            "movement_allowed": True,
+                        },
+                    }))
+                await backend.send(json.dumps({
+                    "type": "control", "action": "command", "value": [0.15, 0.0, 0.0],
+                }))
+                await backend.send(json.dumps({
+                    "type": "control", "action": "pause", "value": False,
+                }))
+                while True:
+                    message = json.loads(await asyncio.wait_for(backend.recv(), timeout=20.0))
+                    if (
+                        message.get("type") == "state"
+                        and float(message["data"]["sim_time"]) >= initial_time + 0.8
+                    ):
+                        break
+                await backend.send(json.dumps({
+                    "type": "control", "action": "pause", "value": True,
+                }))
+
+        await asyncio.sleep(3.0)
         shot = await call("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": False})
         SCREENSHOT.write_bytes(base64.b64decode(shot["data"]))
 

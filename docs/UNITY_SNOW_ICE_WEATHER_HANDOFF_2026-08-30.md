@@ -454,3 +454,90 @@ particles and reached about 0.81x; the selected higher-quality 10.4 cm,
 stride-4 layout uses roughly 640--785 particles depending on sole position and
 runs about 0.67--0.76x when recentering/sliding is included. The UI exposes
 Contact refine and Coarse stride so fidelity can be traded deliberately.
+
+## 2026-08-30 Newton 1.5, true-XYZ deformation, and LIVE reconciliation
+
+The combined branch now uses Newton `1.5.1`, Warp `1.16.0`, MuJoCo `3.11.0`,
+and MuJoCo-Warp `3.11.0`. Host verification reached `cuda:0`, an NVIDIA RTX
+4090 with 24 GiB. The Newton 1.5 API migration includes the renamed joint
+target arrays, model-property notifications, collider velocity mode, public
+collider projection/impulse APIs, and coordinate-vs-DOF target layout handling.
+
+The snow stream no longer reconstructs a regular XY grid and discard MPM shear.
+It publishes actual top-surface `vertices`, per-boundary `layer_vertices`, and
+`substrate_vertices`. Unity consumes those XYZ vertices directly and retains
+the legacy height grids only for compatibility and MuJoCo heightfield support.
+The mechanical-layer volume is an ordered, non-inverting projection derived
+from the actual Newton top surface, terrain-conforming substrate, and each
+layer's authoritative plastic-volume ratio `Jp`. This is live 3D deformation
+within a single-valued surface/volume representation, not a decorative shader
+indentation.
+
+The MPM transfer is APIC. Contact activation is selected from current particle
+positions, unchanged active masks reuse their cached Newton state, and
+no-contact rollback restores GPU-resident position, velocity, APIC gradient,
+`Jp`, and stress snapshots. Moving-window history preserves displacement,
+plastic volume, and stress while intentionally clearing stale momentum when an
+old trail region becomes active again. Coarse background samples retain their
+true local cell volume; unsampled background is renderer/contact context rather
+than overlapping fake MPM mass.
+
+Support ownership is explicit: MuJoCo's deformed terrain heightfield supports
+the production robot, while Newton collider impulses are diagnostic. Applying
+those wrenches on top of MuJoCo support was removed because it double-counted
+the same ground reaction. The separate direct rigid/MPM two-way diagnostic now
+produces non-zero impulses on Newton 1.5, but the robot still sinks/falls and
+that path is not production-ready.
+
+The parallel LIVE implementation is reconciled in the same worktree. LIVE is a
+read-only replay/JSON/UDP adapter path with source epochs, per-channel
+provenance/freshness, stale retention, mutation rejection, and no fallback to
+simulated robot data. Selecting LIVE does not arm hardware control. See
+`docs/LIVE_MODE_IMPLEMENTATION_HANDOFF_2026-08-30.md` for its adapter contract.
+
+The WebGL cloud shader also now uses a ray-coherent low-frequency bank mask in
+addition to its 3D ray march. Previously, long rays averaged unrelated samples
+into a uniform grey veil that read as fog. Storm/whiteout browser captures now
+exercise backend weather forcing, snowfall, fog, and cloud rendering instead
+of checking shader-error absence alone.
+
+Latest sequential host validation:
+
+```text
+verify-newton-mujoco: PASS, Newton 1.5.1 on cuda:0
+verify-newton-snow-deformation: PASS
+  lateral deformation 0.02493 m
+  vertical deformation 0.28820 m
+  minimum projected layer thickness 0.00590 m
+  154 history records restored
+  all no-contact rollback errors 0.0
+verify-snow-dashboard: PASS with known flat-policy slope falls reported
+renderer bridge: PASS
+  lateral stream motion 0.06284 m
+  vertical stream motion 0.05279 m
+  measured stream rate 0.50x realtime
+LIVE direct tests: 7 PASS
+LIVE WebSocket replay probe: PASS
+Unity WebGL/IL2CPP build: PASS
+headless Chromium storm smoke: severe_events=0
+```
+
+The warmed renderer bridge rate varies with contact/recentering and was only
+`0.50x` realtime in the final combined run. Python threading was tested and
+reverted because the Warp/Newton work still throttled the process and made
+stepping less deterministic. Improving beyond the current rate likely needs a
+process-separated MPM worker and/or deeper solver/grid changes.
+
+### Accuracy boundary after this rework
+
+- The implementation is a credible interactive multilayer MPM prototype, not
+  yet a calibrated predictive Everest snow model.
+- Snow, exposed rigid ice, and rock can each be selected, but simultaneous
+  spatial physics/material masks are still missing.
+- An `ICE` layer inside snow is stiff MPM material, not brittle/fracturing ice.
+- The projected Unity layer volume cannot represent overhangs, detached chunks,
+  or arbitrary inter-layer mixing.
+- Site snow parameters still need force-vs-sinkage, shear-box,
+  layer-breakthrough, reaction-closure, and grid/time-step convergence tests.
+- The bundled G1 policy was trained for flat terrain and still falls on the
+  Everest slope independently of the deformation renderer.

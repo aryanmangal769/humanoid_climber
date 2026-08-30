@@ -118,6 +118,29 @@ Shader "Everest/VolumetricClouds"
                 float lightAccum = 0.0;
                 float3 wind = _CloudWind.xyz * (_Time.y * _CloudSpeed * 0.018);
 
+                // A ray through a broad cloud layer crosses enough unrelated
+                // 3D noise that its opacity otherwise converges to a nearly
+                // uniform grey veil.  Keep a lower-frequency, ray-coherent
+                // coverage field at the layer mid-plane so storm clouds retain
+                // readable banks and holes instead of looking like extra fog.
+                float planeDenominator = rd.y;
+                float planeT = abs(planeDenominator) > 0.015
+                    ? (_CloudCenter.y - ro.y) / planeDenominator
+                    : (t0 + t1) * 0.5;
+                planeT = clamp(planeT, t0, t1);
+                float3 coveragePoint = ro + rd * planeT;
+                float2 coverageUv = coveragePoint.xz * 0.013 + wind.xz * 0.55;
+                float coverageNoise = fbm(float3(coverageUv.x, 4.7, coverageUv.y));
+                coverageNoise = lerp(
+                    coverageNoise,
+                    valueNoise(float3(coverageUv * 2.17, 13.4)),
+                    0.28);
+                float coverageThreshold = lerp(0.68, 0.29, saturate(_CloudCoverage));
+                float bankMask = smoothstep(
+                    coverageThreshold - 0.10,
+                    coverageThreshold + 0.10,
+                    coverageNoise);
+
                 [loop]
                 for (int s = 0; s < 22; ++s)
                 {
@@ -133,12 +156,14 @@ Shader "Everest/VolumetricClouds"
                     float n = fbm(q);
                     float threshold = lerp(0.76, 0.34, saturate(_CloudCoverage));
                     float density = saturate((n - threshold) * 4.2) * heightMask * _CloudDensity;
+                    density *= lerp(0.025, 1.0, bankMask);
                     float sampleAlpha = 1.0 - exp(-density * dt * 0.20);
                     float remaining = 1.0 - alpha;
                     alpha += sampleAlpha * remaining;
                     lightAccum += sampleAlpha * remaining * saturate(0.35 + n * 0.9);
                 }
 
+                alpha *= smoothstep(0.0, 0.72, bankMask);
                 if (alpha < 0.003) discard;
                 float light = saturate(lightAccum / max(alpha, 0.001));
                 fixed3 color = lerp(_ShadowColor.rgb, _CloudColor.rgb, light);

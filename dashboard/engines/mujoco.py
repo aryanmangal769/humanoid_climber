@@ -182,7 +182,7 @@ class MuJoCoEngine:
         self._physics_radius_m = 1.25
         self._mpm_min_voxel_size_m = 0.10
         self._physics_detail_cells = 24
-        self._mpm_coupling_hz = 5.0
+        self._mpm_coupling_hz = 3.0
         self._mpm_contact_refine_radius_m = 0.55
         self._mpm_coarse_stride = 4
         self._patch_recenter_fraction = 0.70
@@ -621,8 +621,8 @@ class MuJoCoEngine:
                     raise ValueError("mpm_min_voxel_size_m must be between 0.05 and 0.25")
                 if not 24 <= detail_cells <= 96:
                     raise ValueError("physics_detail_cells must be between 24 and 96")
-                if not 5.0 <= coupling_hz <= 30.0:
-                    raise ValueError("mpm_coupling_hz must be between 5 and 30")
+                if not 2.0 <= coupling_hz <= 30.0:
+                    raise ValueError("mpm_coupling_hz must be between 2 and 30")
                 if not 0.30 <= refine_radius <= 1.25:
                     raise ValueError("mpm_contact_refine_radius_m must be between 0.30 and 1.25")
                 if not 1 <= coarse_stride <= 4:
@@ -1054,24 +1054,26 @@ class MuJoCoEngine:
             mujoco.mj_forward(self.model, self.data)
 
             self._maybe_recenter_snow_patch()
-            if (
-                self._snow_patch is not None
-                and self.data.time + 1.0e-9 >= self._next_mpm_time
-            ):
-                if self._feet_have_contact():
-                    foot_poses = self._foot_poses()
-                    if self._snow_patch.needs_contact_solve(foot_poses):
-                        self._mpm_reactions = self._snow_patch.step(foot_poses)
-                        self._apply_mpm_surface_to_hfield()
-                    else:
-                        self._snow_patch.advance_without_contact()
-                else:
-                    self._mpm_reactions = {}
-                    self._snow_patch.advance_without_contact()
-                self._next_mpm_time += self._snow_patch.dt
+            self._step_mpm_if_due()
 
             self.data.time += dt
             mujoco.mj_forward(self.model, self.data)
+
+    def _step_mpm_if_due(self) -> None:
+        patch = self._snow_patch
+        if patch is None or self.data.time + 1.0e-9 < self._next_mpm_time:
+            return
+        if self._feet_have_contact():
+            foot_poses = self._foot_poses()
+            if patch.needs_contact_solve(foot_poses):
+                self._mpm_reactions = patch.step(foot_poses)
+                self._apply_mpm_surface_to_hfield()
+            else:
+                patch.advance_without_contact()
+        else:
+            self._mpm_reactions = {}
+            patch.advance_without_contact()
+        self._next_mpm_time += patch.dt
 
     def _rebuild_snow_patch(self) -> None:
         if self.snow.column is None or self.snow.surface != "snow":
@@ -1181,14 +1183,16 @@ class MuJoCoEngine:
         return False
 
     def _apply_mpm_reaction_forces(self) -> None:
-        for name, reaction in self._mpm_reactions.items():
-            body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
-            if body < 0:
-                continue
-            force = np.asarray(reaction["force"], dtype=np.float64)
-            point = np.asarray(reaction["position"], dtype=np.float64)
-            self.data.xfrc_applied[body, :3] += force
-            self.data.xfrc_applied[body, 3:] += np.cross(point - self.data.xipos[body], force)
+        """Do not add Newton reactions on top of heightfield support.
+
+        The compatibility architecture mirrors the Newton deformation into
+        MuJoCo's floor heightfield, which already supplies the complete robot
+        support force. Applying collected kinematic-collider impulses as well
+        double-counted the same contact. Keep the impulses as diagnostics until
+        the direct Newton rigid/MPM coupler replaces heightfield support.
+        """
+        # Retain ``_mpm_reactions`` for telemetry/calibration, but deliberately
+        # leave ``xfrc_applied`` unchanged in this support mode.
 
     def _weather_parameters(self) -> dict[str, Any]:
         return {
@@ -1269,19 +1273,9 @@ class MuJoCoEngine:
             previous_qpos = self.data.qpos.copy()
             previous_qvel = self.data.qvel.copy()
             self._maybe_recenter_snow_patch()
-            if self._snow_patch is not None and self.data.time + 1.0e-9 >= self._next_mpm_time:
+            if self._snow_patch is not None:
                 try:
-                    if self._feet_have_contact():
-                        foot_poses = self._foot_poses()
-                        if self._snow_patch.needs_contact_solve(foot_poses):
-                            self._mpm_reactions = self._snow_patch.step(foot_poses)
-                            self._apply_mpm_surface_to_hfield()
-                        else:
-                            self._snow_patch.advance_without_contact()
-                    else:
-                        self._mpm_reactions = {}
-                        self._snow_patch.advance_without_contact()
-                    self._next_mpm_time += self._snow_patch.dt
+                    self._step_mpm_if_due()
                 except Exception as exc:
                     self._snow_mpm_error = f"{type(exc).__name__}: {exc}"
                     self._deactivate_snow_patch()

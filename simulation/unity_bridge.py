@@ -18,6 +18,14 @@ import websockets
 from websockets.asyncio.server import ServerConnection
 
 from dashboard.engines.mujoco import MuJoCoEngine, ROOT
+from simulation.data_sources import LiveDataSource
+from simulation.live_telemetry import (
+    CompositeTelemetryAdapter,
+    JsonFileTelemetryAdapter,
+    OpenMeteoWeatherAdapter,
+    ReplayTelemetryAdapter,
+    UdpTelemetryAdapter,
+)
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -81,8 +89,19 @@ def _message(kind: str, data: Any) -> str:
     return json.dumps({"type": kind, "data": data}, separators=(",", ":"))
 
 
+class ControlRejected(ValueError):
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class UnityRendererBridge:
-    def __init__(self, *, particles: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        particles: bool = False,
+        live_source: LiveDataSource | None = None,
+    ) -> None:
         if not MACRO_TERRAIN.is_file():
             raise FileNotFoundError(
                 f"Macro terrain missing: {MACRO_TERRAIN}. Run maps/build_unity_terrain.py."
@@ -91,12 +110,31 @@ class UnityRendererBridge:
         self.engine.control("snow_parameters", copy.deepcopy(DEFAULT_SNOW))
         self.data_mode = "sim"
         self.environment = copy.deepcopy(DEFAULT_ENVIRONMENT)
+        self.live_source = live_source
+        self.source_epoch = 1
+        self._live_generation = live_source.generation if live_source is not None else 0
         self.include_particles = particles
         self.macro_terrain = json.loads(MACRO_TERRAIN.read_text())
         self.engine.start()
+        if self.live_source is not None:
+            layout = self.engine.frame()
+            self.live_source.set_expected_layout(
+                list(layout.get("body_names", [])),
+                list(layout.get("joint_names", [])),
+            )
 
     def close(self) -> None:
+        if self.live_source is not None:
+            self.live_source.close()
         self.engine.stop()
+
+    def _refresh_live_epoch(self) -> None:
+        if self.data_mode != "live" or self.live_source is None:
+            return
+        generation = self.live_source.generation
+        if generation != self._live_generation:
+            self._live_generation = generation
+            self.source_epoch += 1
 
     def scene(self) -> dict[str, Any]:
         source = self.engine.scene_manifest()
@@ -131,7 +169,17 @@ class UnityRendererBridge:
         result["handedness"] = "right"
         return result
 
-    def frame(self) -> dict[str, Any]:
+    def frame(self) -> dict[str, Any] | None:
+        self._refresh_live_epoch()
+        if self.data_mode == "live":
+            if self.live_source is None:
+                return None
+            live = self.live_source.frame()
+            if live is None:
+                return None
+            live["data_mode"] = "live"
+            live["source_epoch"] = self.source_epoch
+            return live
         frame = self.engine.frame()
         return {
             "schema": "everest-viewer/v1",
@@ -151,9 +199,20 @@ class UnityRendererBridge:
             "command": frame["command"],
             "feet": frame["feet"],
             "paused": bool(frame["paused"]),
+            "data_mode": "sim",
+            "source_epoch": self.source_epoch,
         }
 
     def snow(self) -> dict[str, Any] | None:
+        self._refresh_live_epoch()
+        if self.data_mode == "live":
+            if self.live_source is None:
+                return None
+            result = self.live_source.snow()
+            if result is not None:
+                result["source_epoch"] = self.source_epoch
+                result["data_mode"] = "live"
+            return result
         terrain = self.engine.terrain_frame(include_particles=self.include_particles)
         if terrain.get("mode") != "live":
             return None
@@ -166,8 +225,12 @@ class UnityRendererBridge:
             "size": terrain["size"],
             "resolution": terrain["resolution"],
             "heights": terrain["heights"],
+            "vertices": terrain.get("vertices"),
             "base_heights": terrain.get("base_heights", terrain["heights"]),
             "layer_heights": terrain.get("layer_heights", []),
+            "layer_vertices": terrain.get("layer_vertices", []),
+            "substrate_vertices": terrain.get("substrate_vertices"),
+            "layer_boundary_model": terrain.get("layer_boundary_model"),
             "compaction": terrain["compaction"],
             "material_ids": terrain["material_ids"],
             "surface_kind": terrain.get("surface_kind", "snow"),
@@ -178,23 +241,78 @@ class UnityRendererBridge:
         }
         if self.include_particles:
             result["particles"] = terrain.get("particles")
+        result["source_epoch"] = self.source_epoch
+        result["data_mode"] = "sim"
+        return result
+
+    def terrain(self) -> dict[str, Any] | None:
+        if self.data_mode == "sim":
+            result = self.local_terrain()
+            result["source_epoch"] = self.source_epoch
+            result["data_mode"] = "sim"
+            result.setdefault("sequence", 0)
+            return result
+        if self.live_source is None:
+            return None
+        result = self.live_source.terrain()
+        if result is not None:
+            result["source_epoch"] = self.source_epoch
+            result["data_mode"] = "live"
+        return result
+
+    def environment_payload(self) -> dict[str, Any]:
+        if self.data_mode == "live" and self.live_source is not None:
+            return self.live_source.environment()
+        return copy.deepcopy(self.environment)
+
+    def sensors(self) -> dict[str, Any] | None:
+        if self.data_mode != "live" or self.live_source is None:
+            return None
+        result = self.live_source.sensors()
+        if result is not None:
+            result["source_epoch"] = self.source_epoch
+            result["data_mode"] = "live"
         return result
 
     def snow_history(self) -> dict[str, Any]:
         return self.engine.snow_history()
 
     def state(self) -> dict[str, Any]:
+        self._refresh_live_epoch()
         raw = self.engine.state()
         snow = raw.get("snow") or {}
         mpm = snow.get("mpm") or {}
         policy = raw.get("policy") or {}
-        return {
+        if self.data_mode == "live" and self.live_source is not None:
+            source = self.live_source.health()
+            source["epoch"] = self.source_epoch
+        else:
+            source = {
+                "kind": "newton+mujoco",
+                "name": "local-simulator",
+                "status": "connected" if raw.get("telemetry_error") is None else "disconnected",
+                "epoch": self.source_epoch,
+                "sample_time": time.time(),
+                "age_ms": 0.0,
+                "stale_after_ms": None,
+                "last_error": raw.get("telemetry_error"),
+                "channels": {
+                    "robot": {"status": "connected", "age_ms": 0.0, "provenance": "MuJoCo"},
+                    "weather": {"status": "connected", "age_ms": 0.0, "provenance": "operator/sim"},
+                    "terrain": {"status": "connected", "age_ms": 0.0, "provenance": "static DEM"},
+                    "snow": {"status": "connected", "age_ms": 0.0, "provenance": "Newton predicted"},
+                    "sensors": {"status": "unavailable", "age_ms": None, "provenance": None},
+                },
+            }
+        result = {
             "schema": "everest-state/v1",
             "sequence": int(raw.get("frames", 0)),
             "timestamp": time.time(),
             "sim_time": float(raw.get("sim_time", 0.0)),
-            "engine": "newton+mujoco",
+            "engine": "newton+mujoco" if self.data_mode == "sim" else source["kind"],
             "data_mode": self.data_mode,
+            "source": source,
+            "control_authority": "simulation" if self.data_mode == "sim" else "read_only",
             "surface": raw.get("surface", "snow"),
             "surface_friction_override": raw.get("surface_friction_override"),
             "simulation_settings": copy.deepcopy(raw.get("simulation_settings") or {}),
@@ -226,6 +344,17 @@ class UnityRendererBridge:
             "simulation_fault": raw.get("simulation_fault") or raw.get("telemetry_error"),
             "snow_history": copy.deepcopy(raw.get("snow_history") or {}),
         }
+        if self.data_mode == "live":
+            # These fields describe the parked local simulator and must not be
+            # mistaken for live physics/source health.
+            result["paused"] = False
+            result["simulation_fault"] = source.get("last_error")
+            result["local_simulator"] = {
+                "paused": bool(raw.get("paused", True)),
+                "sim_time": float(raw.get("sim_time", 0.0)),
+                "publishing": False,
+            }
+        return result
 
     def _normalize_weather(self, value: dict[str, Any]) -> dict[str, Any]:
         if value.get("schema") == "everest-weather/v1":
@@ -261,9 +390,28 @@ class UnityRendererBridge:
             mode = str(value or "").strip().lower()
             if mode not in {"sim", "live"}:
                 raise ValueError("mode must be sim or live")
+            if mode == self.data_mode:
+                return
+            if mode == "live" and self.live_source is None:
+                raise ControlRejected(
+                    "LIVE is not configured; start the backend with a live adapter",
+                    code="live_not_configured",
+                )
+            if mode == "live":
+                # Stop the local simulator's held command before changing the
+                # publisher. Selecting LIVE never forwards a hardware command.
+                self.engine.control("command", [0.0, 0.0, 0.0])
+                self.engine.control("manual_force_mode", False)
+                self.engine.control("cheat_mode", False)
             self.data_mode = mode
             self.environment["data_mode"] = mode
+            self.source_epoch += 1
             return
+        if self.data_mode == "live":
+            raise ControlRejected(
+                f"{action} is read-only in LIVE mode",
+                code="live_read_only",
+            )
         if action == "surface":
             self.engine.control("surface", value)
             return
@@ -307,7 +455,7 @@ async def _serve_client(socket: ServerConnection, bridge: UnityRendererBridge) -
     await socket.send(_message("scene", bridge.scene()))
     await socket.send(_message("terrain", bridge.local_terrain()))
     await socket.send(_message("macro_terrain", bridge.macro()))
-    await socket.send(_message("environment", copy.deepcopy(bridge.environment)))
+    await socket.send(_message("environment", bridge.environment_payload()))
     await socket.send(_message("state", bridge.state()))
 
     async def receive_controls() -> None:
@@ -318,39 +466,70 @@ async def _serve_client(socket: ServerConnection, bridge: UnityRendererBridge) -
                     raise ValueError("client messages must use type=control")
                 bridge.control(str(payload.get("action")), payload.get("value"))
                 await socket.send(_message("control_ack", {"action": payload.get("action"), "ok": True}))
+                if payload.get("action") == "mode":
+                    await socket.send(_message("state", bridge.state()))
+                    await socket.send(_message("environment", bridge.environment_payload()))
             except Exception as exc:
-                await socket.send(_message("control_ack", {"ok": False, "message": str(exc)}))
+                error = {"ok": False, "message": str(exc)}
+                if isinstance(exc, ControlRejected):
+                    error["code"] = exc.code
+                await socket.send(_message("control_ack", error))
 
     async def publish() -> None:
         next_frame = next_snow = next_state = 0.0
-        last_frame = last_snow = last_history = -1
+        last_frame: tuple[int, int] | None = None
+        last_snow: tuple[int, int] | None = None
+        last_terrain: tuple[int, int] | None = None
+        last_sensors: tuple[int, float] | None = None
+        last_history = -1
         last_fault: str | None = None
         while True:
             now = asyncio.get_running_loop().time()
             if now >= next_frame:
                 frame = bridge.frame()
-                if frame["sequence"] != last_frame:
+                frame_key = None if frame is None else (
+                    int(frame.get("source_epoch", 0)), int(frame.get("sequence", 0))
+                )
+                if frame is not None and frame_key != last_frame:
                     await socket.send(_message("frame", frame))
-                    last_frame = frame["sequence"]
+                    last_frame = frame_key
                 next_frame = now + 1.0 / 60.0
             if now >= next_snow:
                 snow = bridge.snow()
-                if snow is not None and snow["sequence"] != last_snow:
+                snow_key = None if snow is None else (
+                    int(snow.get("source_epoch", 0)), int(snow.get("sequence", 0))
+                )
+                if snow is not None and snow_key != last_snow:
                     await socket.send(_message("snow", snow))
-                    last_snow = snow["sequence"]
-                history = bridge.snow_history()
-                if history["sequence"] != last_history:
-                    await socket.send(_message("snow_history", history))
-                    last_history = history["sequence"]
+                    last_snow = snow_key
+                terrain = bridge.terrain()
+                terrain_key = None if terrain is None else (
+                    int(terrain.get("source_epoch", 0)), int(terrain.get("sequence", 0))
+                )
+                if terrain is not None and terrain_key != last_terrain:
+                    await socket.send(_message("terrain", terrain))
+                    last_terrain = terrain_key
+                sensors = bridge.sensors()
+                sensors_key = None if sensors is None else (
+                    int(sensors.get("source_epoch", 0)), float(sensors.get("sample_time", 0.0))
+                )
+                if sensors is not None and sensors_key != last_sensors:
+                    await socket.send(_message("sensors", sensors))
+                    last_sensors = sensors_key
+                if bridge.data_mode == "sim":
+                    history = bridge.snow_history()
+                    if history["sequence"] != last_history:
+                        await socket.send(_message("snow_history", history))
+                        last_history = history["sequence"]
                 next_snow = now + 1.0 / 15.0
             if now >= next_state:
                 state = bridge.state()
                 await socket.send(_message("state", state))
-                await socket.send(_message("environment", copy.deepcopy(bridge.environment)))
+                await socket.send(_message("environment", bridge.environment_payload()))
                 fault = state.get("simulation_fault")
                 if fault and fault != last_fault:
                     await socket.send(_message("fault", {
-                        "source": "physics",
+                        "source": "live_telemetry" if bridge.data_mode == "live" else "physics",
                         "message": fault,
                         "sim_time": state["sim_time"],
                     }))
@@ -392,8 +571,13 @@ def _probe(bridge: UnityRendererBridge, host: str, port: int) -> None:
     print(f"WebSocket: ws://{host}:{port}")
 
 
-async def _run(host: str, port: int, particles: bool) -> None:
-    bridge = UnityRendererBridge(particles=particles)
+async def _run(
+    host: str,
+    port: int,
+    particles: bool,
+    live_source: LiveDataSource | None,
+) -> None:
+    bridge = UnityRendererBridge(particles=particles, live_source=live_source)
     try:
         async with websockets.serve(
             lambda socket: _serve_client(socket, bridge),
@@ -404,6 +588,10 @@ async def _run(host: str, port: int, particles: bool) -> None:
             ping_interval=20,
         ):
             print(f"Everest simulation backend listening on ws://{host}:{port}", flush=True)
+            if live_source is None:
+                print("LIVE source: disabled", flush=True)
+            else:
+                print(f"LIVE source: {live_source.kind} ({live_source.name})", flush=True)
             await asyncio.Future()
     finally:
         bridge.close()
@@ -415,15 +603,59 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--probe", action="store_true")
     parser.add_argument("--particles", action="store_true", help="include raw MPM particles in snow messages")
+    parser.add_argument(
+        "--live-adapter",
+        choices=("disabled", "replay", "json-file", "udp"),
+        default="disabled",
+        help="read-only robot/sensor telemetry transport",
+    )
+    parser.add_argument("--live-endpoint", help="path for json-file or bind host:port for udp")
+    parser.add_argument("--live-replay", help="everest-live-replay/v1 JSON or JSONL fixture")
+    parser.add_argument("--live-replay-speed", type=float, default=1.0)
+    parser.add_argument("--live-stale-ms", type=float, default=250.0)
+    parser.add_argument(
+        "--live-weather",
+        choices=("disabled", "open-meteo"),
+        default="disabled",
+        help="optional independent live weather channel",
+    )
+    parser.add_argument("--live-weather-location", default="south-col")
+    parser.add_argument("--live-weather-interval", type=float, default=300.0)
     args = parser.parse_args()
+    adapters = []
+    if args.live_adapter == "replay":
+        if not args.live_replay:
+            parser.error("--live-adapter replay requires --live-replay")
+        adapters.append(ReplayTelemetryAdapter(args.live_replay, speed=args.live_replay_speed))
+    elif args.live_adapter == "json-file":
+        if not args.live_endpoint:
+            parser.error("--live-adapter json-file requires --live-endpoint")
+        adapters.append(JsonFileTelemetryAdapter(args.live_endpoint))
+    elif args.live_adapter == "udp":
+        if not args.live_endpoint:
+            parser.error("--live-adapter udp requires --live-endpoint host:port")
+        adapters.append(UdpTelemetryAdapter(args.live_endpoint))
+    if args.live_weather == "open-meteo":
+        adapters.append(OpenMeteoWeatherAdapter(
+            args.live_weather_location,
+            interval_s=args.live_weather_interval,
+        ))
+    live_source = None
+    if adapters:
+        adapter = adapters[0] if len(adapters) == 1 else CompositeTelemetryAdapter(adapters)
+        live_source = LiveDataSource(
+            adapter,
+            default_environment=DEFAULT_ENVIRONMENT,
+            stale_after_ms=args.live_stale_ms,
+        )
     if args.probe:
-        bridge = UnityRendererBridge(particles=args.particles)
+        bridge = UnityRendererBridge(particles=args.particles, live_source=live_source)
         try:
             _probe(bridge, args.host, args.port)
         finally:
             bridge.close()
         return
-    asyncio.run(_run(args.host, args.port, args.particles))
+    asyncio.run(_run(args.host, args.port, args.particles, live_source))
 
 
 if __name__ == "__main__":

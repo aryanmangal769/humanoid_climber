@@ -78,12 +78,17 @@ def validate(messages: dict[str, dict]) -> None:
 
     nx, ny = snow["resolution"]
     assert nx * ny == len(snow["heights"])
+    assert nx * ny == len(snow["vertices"])
+    assert all(len(vertex) == 3 for vertex in snow["vertices"])
     assert nx * ny == len(snow["base_heights"])
     assert nx * ny == len(snow["compaction"])
     assert nx * ny == len(snow["material_ids"])
     assert 1 <= len(snow["layers"]) <= 6
     assert len(snow["layer_heights"]) == len(snow["layers"])
     assert all(nx * ny == len(values) for values in snow["layer_heights"])
+    assert len(snow["layer_vertices"]) == len(snow["layers"])
+    assert all(nx * ny == len(values) for values in snow["layer_vertices"])
+    assert nx * ny == len(snow["substrate_vertices"])
     assert state["simulation_fault"] is None
 
     scripts = UNITY_ROOT / "Assets/Scripts"

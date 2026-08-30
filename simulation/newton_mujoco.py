@@ -96,12 +96,25 @@ class NewtonMuJoCoBridge:
         newton.eval_fk(self.model, self.state_0.joint_q, self.state_0.joint_qd, self.state_0)
         newton.eval_fk(self.model, self.state_1.joint_q, self.state_1.joint_qd, self.state_1)
 
-        # The imported Menagerie position actuators occupy the scalar DoFs
-        # after the six free-base velocity coordinates.
-        targets = np.zeros(self.model.joint_dof_count, dtype=np.float32)
-        targets[6:] = np.asarray(self.native_data.qpos[7:], dtype=np.float32)
-        self.control.joint_target_pos.assign(targets)
-        self.control.joint_target_vel.zero_()
+        # Newton 1.5 renamed the public target buffers and may expose position
+        # targets either in coordinate layout (including the free-joint
+        # quaternion) or in the legacy DoF layout. Preserve both layouts so
+        # this bridge remains valid across imported Menagerie models.
+        target_q = np.zeros_like(self.control.joint_target_q.numpy())
+        if target_q.shape == joint_q.shape:
+            target_q[:] = joint_q
+        elif target_q.shape == (self.model.joint_dof_count,):
+            # The imported Menagerie position actuators occupy the scalar DoFs
+            # after the six free-base velocity coordinates.
+            target_q[6:] = np.asarray(self.native_data.qpos[7:], dtype=np.float32)
+        else:
+            raise RuntimeError(
+                "Unexpected Newton joint_target_q layout: "
+                f"{target_q.shape}; coordinates={joint_q.shape}, "
+                f"dofs={self.model.joint_dof_count}"
+            )
+        self.control.joint_target_q.assign(target_q)
+        self.control.joint_target_qd.zero_()
         self.control.joint_f.zero_()
         self._queued_wrenches.fill(0.0)
         self.sim_time = 0.0

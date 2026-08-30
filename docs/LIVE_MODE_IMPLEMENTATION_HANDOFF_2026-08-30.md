@@ -246,8 +246,13 @@ Run at least:
 ```bash
 PYTHONPATH=. .venv-sim/bin/python scripts/test_renderer_bridge.py
 PYTHONPATH=. .venv-sim/bin/python scripts/verify_unity_sim_controls.py
-PYTHONPATH=. .venv-sim/bin/python -m pytest <new live-source tests>
+PYTHONPATH=. .venv-sim/bin/python tests/test_live_data_sources.py
+PYTHONPATH=. .venv-sim/bin/python scripts/verify_live_mode.py
 ```
+
+The live-source test module has a built-in direct runner because the simulation
+environment intentionally does not install pytest. It remains pytest-compatible
+when pytest is available in a development environment.
 
 Then build and smoke the Unity WebGL player. Verify both source switching and
 stale/disconnected presentation in the browser console and screenshot.
@@ -284,3 +289,23 @@ simulation mutations are safely rejected; and SIM remains fully functional.
 
 Do not call LIVE complete merely because the button changes color or the
 environment sliders are disabled.
+
+## Implementation result (2026-08-30)
+
+The handoff is implemented by `simulation/data_sources.py` and
+`simulation/live_telemetry.py`. Replay, watched JSON, local UDP, composited
+Open-Meteo weather, and generic robot sensor channels now drive the renderer
+through a normalized read-only contract. `simulation/unity_bridge.py` owns
+atomic SIM/LIVE switching, source epochs, per-channel freshness/provenance,
+stale retention, structured mutation rejection, and SIM restoration.
+
+Unity displays LIVE source status/age/channel warnings, clears robot and snow
+interpolation across source epochs, hides stale cross-source geometry, and
+locks simulation/robot mutation controls while keeping the camera available.
+`tests/fixtures/live_replay.json`, `tests/test_live_data_sources.py`, and
+`scripts/verify_live_mode.py` provide the hardware-free acceptance path.
+
+No physical Unitree command transport was added. A real ROS 2/Unitree process
+should normalize telemetry into the watched JSON or UDP schema; adding command
+authority still requires the separate arming, e-stop, allowlist, and deadman
+design described above.

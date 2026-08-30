@@ -54,6 +54,7 @@ namespace EverestSim
         public JObject LatestSnowHistory { get; private set; }
         public JObject LatestFault { get; private set; }
         public JObject LatestControlAck { get; private set; }
+        public JObject LatestSensors { get; private set; }
 
         public event Action<JObject> SceneReceived;
         public event Action<JObject> TerrainReceived;
@@ -65,6 +66,7 @@ namespace EverestSim
         public event Action<JObject> StateReceived;
         public event Action<JObject> FaultReceived;
         public event Action<JObject> ControlAckReceived;
+        public event Action<JObject> SensorsReceived;
 
         private void Awake()
         {
@@ -302,6 +304,10 @@ namespace EverestSim
                 case "control_ack":
                     LatestControlAck = data;
                     ControlAckReceived?.Invoke(data);
+                    break;
+                case "sensors":
+                    LatestSensors = data;
+                    SensorsReceived?.Invoke(data);
                     break;
             }
         }

@@ -49,3 +49,77 @@ scale is 2 m x 2 m in UTM zone 45N. The local terrain product is 1.2 km square
 at 257x257 transport samples and is the same true-scale product compiled into
 MuJoCo. The macro visual product is a downsampled view of the complete 2 m
 raster footprint, approximately 13.77 x 10.40 km, and has no physics ownership.
+
+## LIVE sources
+
+`SIM` remains the default. `LIVE` is enabled only when the backend is launched
+with at least one explicit, read-only adapter:
+
+```bash
+# Deterministic fixture/replay
+./scripts/start-simulation-backend.sh \
+  --live-adapter replay --live-replay tests/fixtures/live_replay.json
+
+# Atomic JSON snapshot written by a ROS 2, Unitree, or sensor gateway
+./scripts/start-simulation-backend.sh \
+  --live-adapter json-file --live-endpoint /run/everest/latest.json
+
+# Normalized local UDP datagrams plus an independent weather feed
+./scripts/start-simulation-backend.sh \
+  --live-adapter udp --live-endpoint 127.0.0.1:18770 \
+  --live-weather open-meteo --live-weather-location south-col
+```
+
+The watched-file and UDP transports accept `everest-live-sample/v1` objects:
+
+```json
+{
+  "schema": "everest-live-sample/v1",
+  "sample_time": 1788134400.125,
+  "robot": {
+    "sequence": 84,
+    "body_names": ["pelvis"],
+    "body_pos_w": [[0.1, 0.2, 0.9]],
+    "body_quat_w": [[1.0, 0.0, 0.0, 0.0]],
+    "joint_names": [],
+    "joint_positions": [],
+    "joint_velocities": [],
+    "joint_torques": []
+  },
+  "weather": {"schema": "everest-weather/v1"},
+  "terrain": {"schema": "everest-terrain/v1"},
+  "snow": {"schema": "everest-snow-surface/v1"},
+  "sensors": {"imu": {}, "foot_pressure": {}, "lidar": {}},
+  "provenance": {
+    "robot": "unitree-ros2-gateway",
+    "weather": "south-col-station",
+    "terrain": "lidar-reconstruction",
+    "snow": "snow-probe-reconstruction",
+    "sensors": "g1-sensor-fusion"
+  }
+}
+```
+
+Each channel may instead be wrapped as
+`{"data": {...}, "sample_time": ..., "provenance": ...}` when sensors have
+independent clocks. Timestamps are Unix seconds or ISO-8601. Future and
+out-of-order samples are rejected, last-known samples become visibly `STALE`,
+and missing robot bodies/joints are reported in `state.source.channels.robot`.
+
+LIVE `state` messages include `source`, per-channel age/provenance,
+`control_authority: "read_only"`, and a monotonically changing source epoch.
+Frames, terrain, snow, and `sensors` messages include the same epoch. Unity
+clears pose/snow interpolation when it changes. Simulation mutation controls
+return `control_ack` with `code: "live_read_only"`; selecting LIVE while no
+adapter is configured returns `code: "live_not_configured"` and stays in SIM.
+
+Open-Meteo data is a forecast-derived simulation prior, not a measured robot
+observation. Likewise a gateway must label reconstructed snow/terrain honestly;
+the backend never substitutes locally simulated MuJoCo/Newton output into LIVE.
+
+Verify the complete source transition without hardware:
+
+```bash
+PYTHONPATH=. .venv-sim/bin/python tests/test_live_data_sources.py
+PYTHONPATH=. .venv-sim/bin/python scripts/verify_live_mode.py
+```

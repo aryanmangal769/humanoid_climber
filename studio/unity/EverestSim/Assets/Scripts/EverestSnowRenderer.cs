@@ -24,6 +24,7 @@ namespace EverestSim
         private int _width;
         private int _height;
         private long _sequence = -1;
+        private long _sourceEpoch = -1;
         private Vector3[] _targetVertices;
         private Color[] _targetColors;
         private Vector3[] _targetVolumeVertices;
@@ -40,6 +41,19 @@ namespace EverestSim
         public bool NewtonActive { get; private set; }
         public string SurfaceKind { get; private set; } = "snow";
         public long Sequence => _sequence;
+
+        public void SetSourceEpoch(long epoch)
+        {
+            if (epoch == _sourceEpoch) return;
+            _sourceEpoch = epoch;
+            _sequence = -1;
+            _historySequence = -1;
+            _hasSurface = false;
+            if (_surfaceObject != null) _surfaceObject.SetActive(false);
+            if (_volumeObject != null) _volumeObject.SetActive(false);
+            foreach (var historyObject in _historyObjects)
+                if (historyObject != null) historyObject.SetActive(false);
+        }
 
         private void Awake()
         {
@@ -88,6 +102,7 @@ namespace EverestSim
 
         public void OnSnow(JObject surface)
         {
+            SetSourceEpoch(surface.Value<long?>("source_epoch") ?? _sourceEpoch);
             var sequence = surface.Value<long?>("sequence") ?? -1;
             if (sequence <= _sequence) return;
             _sequence = sequence;
@@ -110,10 +125,13 @@ namespace EverestSim
             var origin = surface["origin"] as JArray;
             var size = surface["size"] as JArray;
             var heights = surface["heights"] as JArray;
+            var backendVertices = surface["vertices"] as JArray;
             var compaction = surface["compaction"] as JArray;
             var materialIds = surface["material_ids"] as JArray;
             var baseHeights = surface["base_heights"] as JArray;
             var layerHeights = surface["layer_heights"] as JArray;
+            var layerVertices = surface["layer_vertices"] as JArray;
+            var substrateVertices = surface["substrate_vertices"] as JArray;
             if (resolution == null || origin == null || size == null || heights == null) return;
 
             var width = resolution[0].Value<int>();
@@ -147,7 +165,10 @@ namespace EverestSim
                     var backendX = backendOriginX + (col + 0.5f) * dx;
                     var backendY = backendOriginY + (row + 0.5f) * dz;
                     var backendZ = heights[i].Value<float>();
-                    _targetVertices[i] = new Vector3(backendX, backendZ + 0.004f, backendY);
+                    _targetVertices[i] = ReadBackendVertex(
+                        backendVertices,
+                        i,
+                        new Vector3(backendX, backendZ, backendY)) + Vector3.up * 0.004f;
 
                     var compact = compaction != null && i < compaction.Count
                         ? Mathf.Clamp01(compaction[i].Value<float>())
@@ -174,6 +195,8 @@ namespace EverestSim
                 heights,
                 baseHeights,
                 layerHeights,
+                layerVertices,
+                substrateVertices,
                 layerColors);
 
             if (!_hasSurface)
@@ -213,6 +236,7 @@ namespace EverestSim
                 var origin = patch["origin"] as JArray;
                 var size = patch["size"] as JArray;
                 var heights = patch["heights"] as JArray;
+                var backendVertices = patch["vertices"] as JArray;
                 var compaction = patch["compaction"] as JArray;
                 var materialIds = patch["material_ids"] as JArray;
                 var layers = patch["layers"] as JArray;
@@ -233,10 +257,12 @@ namespace EverestSim
                 for (var col = 0; col < width; ++col)
                 {
                     var i = row * width + col;
-                    vertices[i] = new Vector3(
+                    var fallback = new Vector3(
                         originX + (col + 0.5f) * sizeX / width,
                         heights[i].Value<float>() + 0.004f,
                         originY + (row + 0.5f) * sizeY / height);
+                    vertices[i] = ReadBackendVertex(backendVertices, i, fallback - Vector3.up * 0.004f)
+                        + Vector3.up * 0.004f;
                     var materialId = materialIds != null && i < materialIds.Count ? Mathf.Max(0, materialIds[i].Value<int>()) : 0;
                     var color = materialId < colorsByLayer.Count ? colorsByLayer[materialId] : Color.white;
                     var compact = compaction != null && i < compaction.Count ? Mathf.Clamp01(compaction[i].Value<float>()) : 0f;
@@ -280,59 +306,66 @@ namespace EverestSim
             JArray surfaceHeights,
             JArray baseHeights,
             JArray layerHeights,
+            JArray layerVertices,
+            JArray substrateVertices,
             List<Color> layerColors)
         {
-            var layerCount = Mathf.Min(layerColors.Count, layerHeights?.Count ?? 0);
+            var layerCount = Mathf.Min(layerColors.Count, layerVertices?.Count ?? 0);
             if (!NewtonActive || SurfaceKind != "snow" || layerCount == 0)
             {
                 _volumeObject.SetActive(false);
                 return;
             }
 
-            const int segments = 96;
-            var vertices = new Vector3[layerCount * segments * 2];
+            var ring = BuildBoundaryRing(width, height);
+            var vertices = new Vector3[layerCount * ring.Count * 2];
             var colors = new Color[vertices.Length];
-            var triangles = new int[layerCount * segments * 6];
-            var centerX = originX + sizeX * 0.5f;
-            var centerY = originY + sizeY * 0.5f;
-            // Put the cutaway just inside the shell handoff. The live top
-            // surface covers it from normal views; low angles reveal the
-            // physical layer thickness without drawing a square border.
-            var radius = Mathf.Min(sizeX, sizeY) * 0.46f;
+            var triangles = new int[layerCount * ring.Count * 6];
 
             for (var layer = 0; layer < layerCount; ++layer)
             {
-                var upper = layer == 0 ? surfaceHeights : layerHeights[layer] as JArray;
-                var lower = layer + 1 < layerCount ? layerHeights[layer + 1] as JArray : null;
+                var upper = layerVertices[layer] as JArray;
+                var lower = layer + 1 < layerCount
+                    ? layerVertices[layer + 1] as JArray
+                    : substrateVertices;
+                var upperHeights = layer == 0 ? surfaceHeights : layerHeights?[layer] as JArray;
+                var lowerHeights = layer + 1 < layerCount ? layerHeights?[layer + 1] as JArray : null;
 
-                for (var segment = 0; segment < segments; ++segment)
+                for (var segment = 0; segment < ring.Count; ++segment)
                 {
-                    var angle = segment * Mathf.PI * 2f / segments;
-                    var x = centerX + Mathf.Cos(angle) * radius;
-                    var z = centerY + Mathf.Sin(angle) * radius;
-                    var col = Mathf.Clamp(Mathf.RoundToInt((x - originX) / sizeX * width - 0.5f), 0, width - 1);
-                    var row = Mathf.Clamp(Mathf.RoundToInt((z - originY) / sizeY * height - 0.5f), 0, height - 1);
-                    var sample = row * width + col;
-                    var top = upper != null && sample < upper.Count ? upper[sample].Value<float>() : surfaceHeights[sample].Value<float>();
-                    float bottom;
-                    if (lower != null && sample < lower.Count)
-                        bottom = lower[sample].Value<float>();
-                    else
-                        bottom = (baseHeights != null && sample < baseHeights.Count
-                            ? baseHeights[sample].Value<float>()
-                            : surfaceHeights[sample].Value<float>()) - SurfaceDepthM;
+                    var sample = ring[segment];
+                    var col = sample % width;
+                    var row = sample / width;
+                    var fallbackX = originX + (col + 0.5f) * sizeX / width;
+                    var fallbackY = originY + (row + 0.5f) * sizeY / height;
+                    var fallbackTop = upperHeights != null && sample < upperHeights.Count
+                        ? upperHeights[sample].Value<float>()
+                        : surfaceHeights[sample].Value<float>();
+                    var fallbackBottom = lowerHeights != null && sample < lowerHeights.Count
+                        ? lowerHeights[sample].Value<float>()
+                        : (baseHeights != null && sample < baseHeights.Count
+                            ? baseHeights[sample].Value<float>() - SurfaceDepthM
+                            : fallbackTop - SurfaceDepthM);
 
-                    var vertex = (layer * segments + segment) * 2;
-                    vertices[vertex] = new Vector3(x, top - 0.01f, z);
-                    vertices[vertex + 1] = new Vector3(x, Mathf.Min(top - 0.002f, bottom), z);
+                    var top = ReadBackendVertex(
+                        upper,
+                        sample,
+                        new Vector3(fallbackX, fallbackTop, fallbackY));
+                    var bottom = ReadBackendVertex(
+                        lower,
+                        sample,
+                        new Vector3(fallbackX, fallbackBottom, fallbackY));
+                    var vertex = (layer * ring.Count + segment) * 2;
+                    vertices[vertex] = top - Vector3.up * 0.002f;
+                    vertices[vertex + 1] = bottom;
                     colors[vertex] = colors[vertex + 1] = new Color(
                         layerColors[layer].r,
                         layerColors[layer].g,
                         layerColors[layer].b,
                         0f);
 
-                    var next = (layer * segments + (segment + 1) % segments) * 2;
-                    var triangle = (layer * segments + segment) * 6;
+                    var next = (layer * ring.Count + (segment + 1) % ring.Count) * 2;
+                    var triangle = (layer * ring.Count + segment) * 6;
                     triangles[triangle] = vertex;
                     triangles[triangle + 1] = next;
                     triangles[triangle + 2] = vertex + 1;
@@ -363,6 +396,29 @@ namespace EverestSim
                 _volumeMesh.RecalculateBounds();
             }
             _volumeObject.SetActive(true);
+        }
+
+        private static List<int> BuildBoundaryRing(int width, int height)
+        {
+            var ring = new List<int>(2 * width + 2 * height - 4);
+            for (var col = 0; col < width; ++col) ring.Add(col);
+            for (var row = 1; row < height; ++row) ring.Add(row * width + width - 1);
+            for (var col = width - 2; col >= 0; --col) ring.Add((height - 1) * width + col);
+            for (var row = height - 2; row > 0; --row) ring.Add(row * width);
+            return ring;
+        }
+
+        private static Vector3 ReadBackendVertex(JArray points, int index, Vector3 fallback)
+        {
+            if (points == null || index < 0 || index >= points.Count || !(points[index] is JArray point) || point.Count < 3)
+                return fallback;
+            // Backend is right-handed Z-up; Unity stores the backend Y axis in
+            // transform Z. Keep the actual Newton X/Y displacement instead of
+            // rebuilding a fixed horizontal grid from height samples.
+            return new Vector3(
+                point[0].Value<float>(),
+                point[2].Value<float>(),
+                point[1].Value<float>());
         }
 
         private static List<Color> BuildLayerColors(JArray layers)

@@ -110,6 +110,7 @@ class NewtonSnowPatch:
         self.solver_steps = 0
         self.contact_skipped_steps = 0
         self.active_particle_count = 0
+        self._active_particle_mask: np.ndarray | None = None
         self._last_solved_foot_positions: dict[str, np.ndarray] = {}
         self.max_sinkage_m = 0.0
         self.nominal_foot_load_n = float(nominal_foot_load_n)
@@ -266,6 +267,7 @@ class NewtonSnowPatch:
         surface_offsets: list[float] = []
         material_ids: list[int] = []
         depth_codes: list[int] = []
+        rest_cells: list[int] = []
         attributes: dict[str, list[float]] = {
             key: []
             for key in (
@@ -277,6 +279,7 @@ class NewtonSnowPatch:
                 "mpm:yield_pressure",
                 "mpm:tensile_yield_ratio",
                 "mpm:yield_stress",
+                "mpm:dilatancy",
             )
         }
 
@@ -287,7 +290,7 @@ class NewtonSnowPatch:
         self.surface_resolution = (nx, ny)
         foot_xy = [np.asarray(pose.position[:2], dtype=np.float32) for pose in foot_poses]
         refine_radius_sq = self.contact_refine_radius * self.contact_refine_radius
-        horizontal_samples: list[tuple[int, int, float]] = []
+        horizontal_samples: list[tuple[int, int]] = []
         x0 = self.center_xy[0] - 0.5 * self.size_xy[0]
         y0 = self.center_xy[1] - 0.5 * self.size_xy[1]
         for ix in range(nx):
@@ -298,21 +301,24 @@ class NewtonSnowPatch:
                 refined = any(float(np.sum((point - foot) ** 2)) <= refine_radius_sq for foot in foot_xy)
                 if not refined and (ix % self.coarse_stride != 0 or iy % self.coarse_stride != 0):
                     continue
-                represented_area = dx * dy * (1.0 if refined else self.coarse_stride * self.coarse_stride)
-                horizontal_samples.append((ix, iy, represented_area))
-        represented_total_area = sum(sample[2] for sample in horizontal_samples)
-        area_normalization = self.size_xy[0] * self.size_xy[1] / max(represented_total_area, 1.0e-9)
+                horizontal_samples.append((ix, iy))
+        # SolverImplicitMPM has one scalar particle radius; a sparse particle
+        # cannot truthfully represent a wide, thin background slab. Keep every
+        # simulated particle at the local cell volume instead of inflating
+        # coarse samples into overlapping cubic blocks. Unsampled background is
+        # the unchanged MuJoCo/renderer snow prior, not fake MPM mass.
+        self.simulated_area_m2 = len(horizontal_samples) * dx * dy
         accumulated_depth = 0.0
         for layer_id, layer in enumerate(self.column.layers):
             layer_start = len(positions)
             nz = max(1, math.ceil(layer.thickness_m / self.voxel_size))
             dz = layer.thickness_m / nz
             layer_attributes = layer.newton_attributes()
-            for ix, iy, represented_area in horizontal_samples:
+            for ix, iy in horizontal_samples:
                 world_x = x0 + (ix + 0.5) * dx
                 world_y = y0 + (iy + 0.5) * dy
                 surface_z = self.surface_height(world_x, world_y)
-                particle_volume = represented_area * area_normalization * dz
+                particle_volume = dx * dy * dz
                 particle_mass = layer.density_kg_m3 * particle_volume
                 radius = 0.5 * float(np.cbrt(particle_volume))
                 for iz in range(nz):
@@ -324,6 +330,7 @@ class NewtonSnowPatch:
                     surface_offsets.append(0.5 * dz)
                     material_ids.append(layer_id)
                     depth_codes.append(int(round((iz + 0.5) / nz * 16.0)))
+                    rest_cells.append(iy * nx + ix)
                     for name, values in attributes.items():
                         values.append(layer_attributes[name])
             if layer_id == 0:
@@ -347,6 +354,7 @@ class NewtonSnowPatch:
         self.model.gravity.zero_()
         self.particle_material_ids = np.asarray(material_ids, dtype=np.uint8)
         self.particle_depth_codes = np.asarray(depth_codes, dtype=np.uint8)
+        self.particle_rest_cells = np.asarray(rest_cells, dtype=np.int32)
         self.particle_surface_offsets = np.asarray(surface_offsets, dtype=np.float32)
         self.initial_particle_surface_offsets = self.particle_surface_offsets.copy()
         self.initial_particle_positions = np.asarray(positions, dtype=np.float32)
@@ -354,16 +362,45 @@ class NewtonSnowPatch:
         self.initial_particle_radii = np.asarray(radii, dtype=np.float32)
         self.total_mass_kg = float(sum(masses))
 
+        # Map every renderer/contact-grid vertex to the nearest represented
+        # rest cell. Fine cells around the soles map one-to-one; untouched
+        # background maps to its sparse, uniform-volume anchor without
+        # changing the anchor's physical mass or radius.
+        sample_cells = np.asarray([iy * nx + ix for ix, iy in horizontal_samples], dtype=np.int32)
+        sample_xy = np.column_stack((sample_cells % nx, sample_cells // nx)).astype(np.float32)
+        grid_cells = np.arange(nx * ny, dtype=np.int32)
+        grid_xy = np.column_stack((grid_cells % nx, grid_cells // nx)).astype(np.float32)
+        nearest = np.argmin(
+            np.sum((grid_xy[:, None, :] - sample_xy[None, :, :]) ** 2, axis=2),
+            axis=1,
+        )
+        self.render_owner_cells = sample_cells[nearest]
+        self.layer_top_particles: list[np.ndarray] = []
+        for layer_id in range(len(self.column.layers)):
+            mapping = np.full(nx * ny, -1, dtype=np.int32)
+            selected = np.flatnonzero(self.particle_material_ids == layer_id)
+            # Layers were emitted top-to-bottom, so the first particle for a
+            # rest cell is the material point at that layer's upper boundary.
+            for particle in selected:
+                cell = int(self.particle_rest_cells[particle])
+                if mapping[cell] < 0:
+                    mapping[cell] = int(particle)
+            self.layer_top_particles.append(mapping)
+
         options = SolverImplicitMPM.Config()
         options.voxel_size = self.voxel_size
         options.grid_type = "sparse" if self.device.is_cuda else "dense"
-        options.transfer_scheme = "pic"
-        options.collider_velocity_mode = "finite_difference"
+        # APIC preserves local angular/shear motion that PIC smears away. This
+        # matters for snow berms and lateral footprint flow and is Newton's
+        # current default for its direct two-way examples.
+        options.transfer_scheme = "apic"
+        # Newton 1.5 names the finite-difference collider mode "backward".
+        options.collider_velocity_mode = "backward"
         # The previous 45-iteration solve was materially slower than the
         # stream cadence while providing no visible benefit for this small
         # terrain window. Keep the implicit solver conservative but bounded;
         # Newton remains authoritative for deformation and reaction impulses.
-        options.max_iterations = 12 if self.device.is_cuda else 8
+        options.max_iterations = 6 if self.device.is_cuda else 5
         options.tolerance = 1.0e-4
         options.critical_fraction = 0.0
         options.air_drag = 1.0
@@ -395,6 +432,7 @@ class NewtonSnowPatch:
         self.solver_steps = 0
         self.contact_skipped_steps = 0
         self.active_particle_count = 0
+        self._active_particle_mask = None
         self._last_solved_foot_positions.clear()
         self.history_restored_particles = 0
         self.initial_foot_positions = {
@@ -409,10 +447,16 @@ class NewtonSnowPatch:
         self._cached_particle_positions = positions
         velocities = self.state.particle_qd.numpy()
         plastic = self.state.mpm.particle_Jp.numpy()
+        stresses = self.state.mpm.particle_stress.numpy()
         for index, (initial, current) in enumerate(zip(self.initial_particle_positions, positions)):
             displacement = current - initial
             jp = float(plastic[index])
-            if float(np.linalg.norm(displacement)) < 1.0e-5 and float(np.linalg.norm(velocities[index])) < 1.0e-4 and abs(jp - 1.0) < 1.0e-5:
+            if (
+                float(np.linalg.norm(displacement)) < 1.0e-5
+                and float(np.linalg.norm(velocities[index])) < 1.0e-4
+                and abs(jp - 1.0) < 1.0e-5
+                and float(np.linalg.norm(stresses[index])) < 1.0e-3
+            ):
                 continue
             key = (
                 int(round(float(initial[0]) / cell_size)),
@@ -426,6 +470,7 @@ class NewtonSnowPatch:
                 displacement.astype(np.float32),
                 np.asarray(velocities[index], dtype=np.float32),
                 jp,
+                np.asarray(stresses[index], dtype=np.float32),
             )
 
     def import_deformation_history(self, history: dict, cell_size: float = 0.10) -> int:
@@ -438,6 +483,7 @@ class NewtonSnowPatch:
             self._cached_particle_positions = positions
         velocities = self.state.particle_qd.numpy()
         plastic = self.state.mpm.particle_Jp.numpy()
+        stresses = self.state.mpm.particle_stress.numpy()
         restored = 0
         search = max(1, int(math.ceil(self.voxel_size / cell_size)))
         max_distance_sq = (self.voxel_size * 0.80) ** 2
@@ -467,11 +513,18 @@ class NewtonSnowPatch:
             # momentum, but its plastic volume/compaction remains persistent.
             velocities[index] = 0.0
             plastic[index] = float(best[4])
+            # Newton 1.5's constitutive state is stress + plastic volume. Keep
+            # the stress history across moving-window rebuilds. Velocity and
+            # APIC velocity gradients intentionally restart at zero so a trail
+            # does not resurrect stale momentum when the robot returns.
+            if len(best) > 5:
+                stresses[index] = np.asarray(best[5], dtype=np.float32)
             restored += 1
         if restored:
             self.state.particle_q.assign(positions)
             self.state.particle_qd.assign(velocities)
             self.state.mpm.particle_Jp.assign(plastic)
+            self.state.mpm.particle_stress.assign(stresses)
             self._cached_surface = self._surface_arrays()
             self._update_sinkage(self._cached_surface[0])
         return restored
@@ -502,13 +555,9 @@ class NewtonSnowPatch:
         Keeping the Warp arrays allocated in place is important because the
         implicit solver may capture CUDA graphs that reference these buffers.
         """
-        masses = self.model.particle_mass.numpy()
-        radii = self.model.particle_radius.numpy()
-        volumes = 8.0 * np.power(radii, 3)
-        self.solver._mpm_model.particle_radius.assign(radii)
-        self.solver._mpm_model.particle_volume.assign(volumes)
-        self.solver._mpm_model.particle_density.assign(masses / np.maximum(volumes, 1.0e-12))
-        self.solver._mpm_model.notify_particle_material_changed()
+        # Newton 1.5 provides a public invalidation hook that refreshes mass,
+        # radius, volume, density, material extrema, and cached particle flags.
+        self.solver.notify_model_changed(self.newton.ModelFlags.MODEL_PROPERTIES)
 
     def _apply_snowfall_deposition(self) -> None:
         """Apply snowfall as a mass-conserving surface flux into the MPM pack.
@@ -555,12 +604,7 @@ class NewtonSnowPatch:
         self.particle_surface_offsets[top] *= growth
         self._refresh_particle_mass_volume()
 
-        added_mass = (
-            self.size_xy[0]
-            * self.size_xy[1]
-            * depth_increment
-            * self.column.layers[0].density_kg_m3
-        )
+        added_mass = self.simulated_area_m2 * depth_increment * self.column.layers[0].density_kg_m3
         self.deposited_depth_m += depth_increment
         self.deposited_mass_kg += added_mass
         self.total_mass_kg += added_mass
@@ -594,7 +638,16 @@ class NewtonSnowPatch:
         # Newton's transfer/rheology kernels honor per-particle ACTIVE flags.
         # Keep coarse background particles for trail continuity, but solve only
         # the fine cells in the current sole neighborhoods.
-        particle_positions = self.initial_particle_positions
+        particle_positions = self.state.particle_q.numpy()
+        # Keep rollback state on-device. Copying five full MPM arrays through
+        # NumPy every contact tick serialized the CUDA stream and made robot
+        # actions visibly lag. Only a rejected no-contact solve reads the
+        # restored positions back for the renderer cache.
+        pre_positions = self.wp.clone(self.state.particle_q)
+        pre_velocities = self.wp.clone(self.state.particle_qd)
+        pre_velocity_gradients = self.wp.clone(self.state.mpm.particle_qd_grad)
+        pre_plastic = self.wp.clone(self.state.mpm.particle_Jp)
+        pre_stress = self.wp.clone(self.state.mpm.particle_stress)
         active = np.zeros(len(particle_positions), dtype=bool)
         radius_sq = self.contact_refine_radius * self.contact_refine_radius
         for pose in foot_poses:
@@ -607,7 +660,13 @@ class NewtonSnowPatch:
             particle_flags | active_bit,
             particle_flags & ~active_bit,
         )
-        self.model.particle_flags.assign(particle_flags)
+        if self._active_particle_mask is None or not np.array_equal(active, self._active_particle_mask):
+            self.model.particle_flags.assign(particle_flags)
+            # SolverImplicitMPM caches transfer/material masks. Rebind them
+            # only when the neighborhood changed; rebuilding identical masks
+            # every contact tick is an avoidable GPU synchronization.
+            self.solver.notify_model_changed(self.newton.ModelFlags.MODEL_PROPERTIES)
+            self._active_particle_mask = active.copy()
         # Inactive particles are excluded by Newton's transfer, rheology, and
         # collision kernels, so untouched coarse background state remains
         # frozen on the GPU without a CPU round-trip/restore pass.
@@ -616,8 +675,8 @@ class NewtonSnowPatch:
         # is the solver's documented final safety pass for soft compliant
         # particles, preventing a low-modulus snow layer from tunnelling
         # through the basal plane or a moving sole between MPM frames.
-        self.solver._project_outside(self.state, self.state, self.dt)
-        impulses, positions, collider_ids = self.solver._collect_collider_impulses(self.state)
+        self.solver.project_outside(self.state, self.state, self.dt)
+        impulses, positions, collider_ids = self.solver.collect_collider_impulses(self.state)
         impulse_np = impulses.numpy()
         position_np = positions.numpy()
         collider_np = collider_ids.numpy()
@@ -635,6 +694,8 @@ class NewtonSnowPatch:
                 continue
             total_impulse = impulse_np[selected].sum(axis=0)
             magnitude = np.linalg.norm(impulse_np[selected], axis=1)
+            if float(magnitude.sum()) <= 1.0e-8:
+                continue
             if float(magnitude.sum()) > 1.0e-9:
                 contact_position = np.average(position_np[selected], axis=0, weights=magnitude)
             else:
@@ -649,6 +710,18 @@ class NewtonSnowPatch:
                 "position": contact_position.astype(float).tolist(),
                 "impulse": total_impulse.astype(float).tolist(),
             }
+        if not reactions:
+            # A moving collider outside the snow can still make the implicit
+            # solve drift a soft stress-free pack. No measured foot impulse
+            # means no physical interaction, so restore the complete MPM state
+            # (including APIC gradient, plastic volume, and stress), not only
+            # the visible positions.
+            self.wp.copy(self.state.particle_q, pre_positions)
+            self.wp.copy(self.state.particle_qd, pre_velocities)
+            self.wp.copy(self.state.mpm.particle_qd_grad, pre_velocity_gradients)
+            self.wp.copy(self.state.mpm.particle_Jp, pre_plastic)
+            self.wp.copy(self.state.mpm.particle_stress, pre_stress)
+            self._cached_particle_positions = pre_positions.numpy()
         self.last_impulses = reactions
         self._last_solved_foot_positions = {
             pose.name: np.asarray(pose.position, dtype=np.float32).copy()
@@ -669,36 +742,87 @@ class NewtonSnowPatch:
 
     def _surface_arrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         nx, ny = self.surface_resolution
-        positions = self._cached_particle_positions
-        if positions is None:
-            positions = self.state.particle_q.numpy()
-            self._cached_particle_positions = positions
-        x0 = self.center_xy[0] - 0.5 * self.size_xy[0]
-        y0 = self.center_xy[1] - 0.5 * self.size_xy[1]
-        ix = np.clip(((positions[:, 0] - x0) / self.size_xy[0] * nx).astype(int), 0, nx - 1)
-        iy = np.clip(((positions[:, 1] - y0) / self.size_xy[1] * ny).astype(int), 0, ny - 1)
-        flat = iy * nx + ix
-        heights = np.full(nx * ny, -np.inf, dtype=np.float32)
-        top_particle = np.full(nx * ny, -1, dtype=np.int32)
-        top_values = positions[:, 2] + self.particle_surface_offsets
-        order = np.argsort(top_values)
-        heights[flat[order]] = top_values[order]
-        top_particle[flat[order]] = order
-
+        vertices = self._layer_vertex_arrays()[0]
+        heights = vertices[:, 2].copy()
         initial = self._initial_surface_grid()
-        missing = ~np.isfinite(heights)
-        heights[missing] = initial[missing]
         # The top surface cannot pass below the terrain-conforming substrate.
         # This is a physical bound, not a renderer clamp: the bounded values
         # feed both Unity and MuJoCo's contact heightfield.
         heights = np.maximum(heights, initial - self.column.depth)
+        owner_particles = self.layer_top_particles[0][self.render_owner_cells]
+        valid = owner_particles >= 0
         material_ids = np.zeros(nx * ny, dtype=np.uint8)
-        valid = top_particle >= 0
-        material_ids[valid] = self.particle_material_ids[top_particle[valid]]
+        material_ids[valid] = self.particle_material_ids[owner_particles[valid]]
         compaction = np.zeros(nx * ny, dtype=np.float32)
         particle_jp = self.state.mpm.particle_Jp.numpy()
-        compaction[valid] = np.clip(1.0 - particle_jp[top_particle[valid]], 0.0, 1.0)
+        compaction[valid] = np.clip(1.0 - particle_jp[owner_particles[valid]], 0.0, 1.0)
         return heights, material_ids, compaction
+
+    def _layer_vertex_arrays(self) -> list[np.ndarray]:
+        """Return Lagrangian XYZ vertices for every mechanical layer boundary.
+
+        The old stream discarded horizontal particle displacement by binning
+        the current state back into fixed XY height cells. These vertices keep
+        a stable rest-grid topology while applying the actual displacement of
+        each Newton material point, including lateral shear and heave.
+        """
+        nx, ny = self.surface_resolution
+        current = self._cached_particle_positions
+        if current is None:
+            current = self.state.particle_q.numpy()
+            self._cached_particle_positions = current
+        x0 = self.center_xy[0] - 0.5 * self.size_xy[0]
+        y0 = self.center_xy[1] - 0.5 * self.size_xy[1]
+        dx = self.size_xy[0] / nx
+        dy = self.size_xy[1] / ny
+        cells = np.arange(nx * ny, dtype=np.int32)
+        rest_xy = np.column_stack((
+            x0 + (cells % nx + 0.5) * dx,
+            y0 + (cells // nx + 0.5) * dy,
+        )).astype(np.float32)
+        pristine = self._initial_surface_grid(include_deposition=False)
+
+        results: list[np.ndarray] = []
+        depth_above = 0.0
+        for layer_id, layer in enumerate(self.column.layers):
+            vertices = np.column_stack((rest_xy, pristine - depth_above)).astype(np.float32)
+            owner_particles = self.layer_top_particles[layer_id][self.render_owner_cells]
+            valid = owner_particles >= 0
+            particle_ids = owner_particles[valid]
+            rest_top = self.initial_particle_positions[particle_ids].copy()
+            rest_top[:, 2] += self.initial_particle_surface_offsets[particle_ids]
+            current_top = current[particle_ids].copy()
+            current_top[:, 2] += self.particle_surface_offsets[particle_ids]
+            vertices[valid] += current_top - rest_top
+            results.append(vertices)
+            depth_above += layer.thickness_m
+
+        # A multilayer MPM particle cloud can mix and overturn locally, while
+        # the renderer/contact protocol is intentionally single-valued. Raw
+        # per-layer top particles can therefore cross and create negative
+        # visual thickness. Project ordered boundaries from the actual top and
+        # substrate using each layer's Newton plastic volume ratio (Jp). This
+        # preserves authoritative compaction while making the limitation of a
+        # heightfield-compatible volume explicit and non-inverting.
+        substrate_z = pristine - self.column.depth
+        results[0][:, 2] = np.maximum(results[0][:, 2], substrate_z + 0.002)
+        particle_jp = self.state.mpm.particle_Jp.numpy()
+        thickness_weights = np.empty((len(self.column.layers), nx * ny), dtype=np.float32)
+        for layer_id, layer in enumerate(self.column.layers):
+            owner_particles = self.layer_top_particles[layer_id][self.render_owner_cells]
+            jp = np.ones(nx * ny, dtype=np.float32)
+            valid = owner_particles >= 0
+            jp[valid] = np.clip(particle_jp[owner_particles[valid]], 0.02, 2.0)
+            thickness_weights[layer_id] = layer.thickness_m * jp
+        total_weight = np.maximum(thickness_weights.sum(axis=0), 1.0e-8)
+        available_depth = np.maximum(results[0][:, 2] - substrate_z, 0.002)
+        cumulative = np.zeros(nx * ny, dtype=np.float32)
+        for layer_id in range(1, len(self.column.layers)):
+            cumulative += thickness_weights[layer_id - 1]
+            results[layer_id][:, 2] = (
+                results[0][:, 2] - available_depth * cumulative / total_weight
+            )
+        return results
 
     def _layer_surface_arrays(self) -> list[np.ndarray]:
         """Return the live upper boundary of every mechanical layer.
@@ -707,33 +831,7 @@ class NewtonSnowPatch:
         state, not independently simulated surfaces. Missing cells fall back
         to the undeformed terrain-conforming layer boundary.
         """
-        nx, ny = self.surface_resolution
-        positions = self._cached_particle_positions
-        if positions is None:
-            positions = self.state.particle_q.numpy()
-            self._cached_particle_positions = positions
-        x0 = self.center_xy[0] - 0.5 * self.size_xy[0]
-        y0 = self.center_xy[1] - 0.5 * self.size_xy[1]
-        ix = np.clip(((positions[:, 0] - x0) / self.size_xy[0] * nx).astype(int), 0, nx - 1)
-        iy = np.clip(((positions[:, 1] - y0) / self.size_xy[1] * ny).astype(int), 0, ny - 1)
-        flat = iy * nx + ix
-        top_values = positions[:, 2] + self.particle_surface_offsets
-
-        results: list[np.ndarray] = []
-        depth_above = 0.0
-        for layer_id, layer in enumerate(self.column.layers):
-            values = np.full(nx * ny, -np.inf, dtype=np.float32)
-            selected = np.flatnonzero(self.particle_material_ids == layer_id)
-            if len(selected):
-                order = selected[np.argsort(top_values[selected])]
-                values[flat[order]] = top_values[order]
-
-            fallback = self._initial_surface_grid() - depth_above
-            missing = ~np.isfinite(values)
-            values[missing] = fallback[missing]
-            results.append(values)
-            depth_above += layer.thickness_m + (self.deposited_depth_m if layer_id == 0 else 0.0)
-        return results
+        return [vertices[:, 2].copy() for vertices in self._layer_vertex_arrays()]
 
     def _initial_surface_grid(self, *, include_deposition: bool = True) -> np.ndarray:
         nx, ny = self.surface_resolution
@@ -756,7 +854,8 @@ class NewtonSnowPatch:
 
     def terrain_frame(self, *, include_particles: bool = True) -> dict[str, Any]:
         heights, material_ids, compaction = self.surface_arrays()
-        layer_heights = self._layer_surface_arrays()
+        layer_vertices = self._layer_vertex_arrays()
+        layer_heights = [vertices[:, 2] for vertices in layer_vertices]
         nx, ny = self.surface_resolution
         particles = self._cached_particle_positions
         if include_particles and particles is None:
@@ -779,8 +878,15 @@ class NewtonSnowPatch:
             "size": list(self.size_xy),
             "resolution": [nx, ny],
             "heights": heights.tolist(),
+            "vertices": layer_vertices[0].tolist(),
             "base_heights": self._initial_surface_grid().tolist(),
             "layer_heights": [values.tolist() for values in layer_heights],
+            "layer_vertices": [values.tolist() for values in layer_vertices],
+            "layer_boundary_model": "top_surface_plus_newton_Jp_volume_projection",
+            "substrate_vertices": np.column_stack((
+                layer_vertices[-1][:, :2],
+                self._initial_surface_grid(include_deposition=False) - self.column.depth,
+            )).astype(np.float32).tolist(),
             "material_ids": material_ids.tolist(),
             "compaction": compaction.tolist(),
             "surface_kind": "snow",
@@ -805,6 +911,7 @@ class NewtonSnowPatch:
             "cuda": bool(self.device.is_cuda),
             "particle_count": int(self.model.particle_count),
             "particle_mass_kg": self.total_mass_kg,
+            "simulated_area_m2": self.simulated_area_m2,
             "voxel_size_m": self.voxel_size,
             "window_size_m": list(self.size_xy),
             "terrain_conforming": True,
@@ -827,5 +934,8 @@ class NewtonSnowPatch:
             "pending_deposition_depth_m": self.pending_deposition_depth_m,
             "deposited_mass_kg": self.deposited_mass_kg,
             "deposition_events": self.deposition_events,
-            "coupling": "snowfall mass flux -> Newton MPM top layer -> MuJoCo hfield; Newton foot impulses forwarded when present",
+            "coupling": "Newton kinematic-foot deformation -> MuJoCo deformed heightfield support; reaction impulses diagnostic only to avoid double-counting",
+            "robot_support_owner": "mujoco_deformed_heightfield",
+            "reaction_impulses_applied": False,
+            "solve_delivery": "asynchronous_latest_pose",
         }

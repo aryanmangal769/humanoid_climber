@@ -85,6 +85,7 @@ class StaticSnowTwoWayCoupler:
                 "mpm:yield_pressure",
                 "mpm:tensile_yield_ratio",
                 "mpm:yield_stress",
+                "mpm:dilatancy",
             )
         }
 
@@ -184,7 +185,7 @@ class StaticSnowTwoWayCoupler:
         self.state.body_f.zero_()
 
     def _queue_reaction_impulses(self) -> tuple[int, float]:
-        impulses, positions, collider_ids = self.solver._collect_collider_impulses(self.state)
+        impulses, positions, collider_ids = self.solver.collect_collider_impulses(self.state)
         impulse_np = impulses.numpy()
         position_np = positions.numpy()
         collider_np = collider_ids.numpy()
@@ -222,7 +223,7 @@ class StaticSnowTwoWayCoupler:
         self.bridge.step(rigid_steps)
         self._sync_colliders()
         self.solver.step(self.state, self.state, contacts=None, control=None, dt=self.dt)
-        self.solver._project_outside(self.state, self.state, self.dt)
+        self.solver.project_outside(self.state, self.state, self.dt)
         coupled, total_impulse = self._queue_reaction_impulses()
         self.sim_time += self.dt
         self.last_coupled_bodies = coupled

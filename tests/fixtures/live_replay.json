@@ -1,0 +1,78 @@
+{
+  "schema": "everest-live-replay/v1",
+  "loop": false,
+  "samples": [
+    {
+      "offset_s": 0.0,
+      "sequence": 41,
+      "provenance": {
+        "robot": "unitree-g1-replay",
+        "weather": "south-col-weather-station",
+        "terrain": "robot-lidar-reconstruction",
+        "snow": "foot-probe-reconstruction",
+        "sensors": "g1-sensor-fusion"
+      },
+      "robot": {
+        "sequence": 41,
+        "sim_time": 12.5,
+        "body_names": ["pelvis", "left_foot", "right_foot"],
+        "body_pos_w": [[1.0, 2.0, 0.82], [0.9, 2.1, 0.05], [1.1, 2.1, 0.05]],
+        "body_quat_w": [[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]],
+        "base_linear_velocity": [0.2, 0.0, 0.0],
+        "base_angular_velocity": [0.0, 0.0, 0.1],
+        "joint_names": ["left_hip_pitch_joint", "right_hip_pitch_joint"],
+        "joint_positions": [0.12, 0.11],
+        "joint_velocities": [0.01, 0.02],
+        "joint_torques": [3.2, 3.1],
+        "feet": {}
+      },
+      "weather": {
+        "schema": "everest-weather/v1",
+        "source": "South Col station replay",
+        "conditions": {
+          "temperature_c": -27.0,
+          "wind_speed_kmh": 72.0,
+          "wind_gust_kmh": 90.0,
+          "wind_direction_deg": 305.0,
+          "cloud_cover_percent": 80.0
+        },
+        "simulation": {
+          "visibility_scale": 0.35,
+          "movement_allowed": false,
+          "snow_prior": {"snowfall_rate_mm_h": 7.0}
+        }
+      },
+      "terrain": {
+        "schema": "everest-terrain/v1",
+        "sequence": 8,
+        "grid_width": 2,
+        "grid_height": 2,
+        "world_width_m": 1.0,
+        "world_depth_m": 1.0,
+        "terrain_center": [1.0, 2.0, 0.0],
+        "heights": [0.0, 0.02, 0.01, 0.03]
+      },
+      "snow": {
+        "schema": "everest-snow-surface/v1",
+        "sequence": 9,
+        "origin": [0.5, 1.5, 0.0],
+        "size": [1.0, 1.0],
+        "resolution": [2, 2],
+        "heights": [0.08, 0.09, 0.08, 0.1],
+        "base_heights": [0.0, 0.02, 0.01, 0.03],
+        "compaction": [0.1, 0.2, 0.1, 0.3],
+        "material_ids": [0, 0, 0, 0],
+        "surface_kind": "snow",
+        "surface_depth_m": 0.08,
+        "surface_friction": 0.31,
+        "layers": [],
+        "mpm": {"measured": false, "model": "sensor-reconstruction"}
+      },
+      "sensors": {
+        "imu": {"acceleration_m_s2": [0.0, 0.0, 9.81]},
+        "foot_pressure": {"left_n": 280.0, "right_n": 275.0},
+        "lidar": {"points": 18432}
+      }
+    }
+  ]
+}
