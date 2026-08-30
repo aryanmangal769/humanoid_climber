@@ -18,6 +18,12 @@
 - [x] Launched flat-wind fine-tuning over friction `0.15–1.0`, X wind `-4–4 N`, and Y wind `-16–16 N`.
 - [x] Added and locally smoke-tested the native 29-action supine recovery tracking task.
 - [x] Launched bounded recovery training from scratch using the private native MjLab motion artifact.
+- [x] Added separate controlled and flat randomized-treadmill G1 velocity tasks.
+- [x] Randomized terrain, friction, wind, pushes, commands, initial state, sensors, inertial properties, joint dynamics, PD gains, and action latency.
+- [x] Smoke-tested the fully randomized task through one local CPU PPO update.
+- [x] Added a Viser condition/action log tied to the actual executable policy, with concise fallback and fine-tuning template states.
+- [x] Hard-disabled the training CLI and removed the simulated fine-tuning queue/handoff path.
+- [ ] Implement training later; do not enable it until explicitly requested.
 
 ## Mixture-of-policies roadmap
 
@@ -82,4 +88,3 @@ HF train only if (2) fails
 Ice finetune
 Harder Himalaya stuff
 Do not fork mjlab and do not start ice until a flat walk plays on the Mac. The better Mac is for steps 0–1 and 3 playback; Hugging Face is only step 2 (and the ice finetune GPU run in step 3).
-

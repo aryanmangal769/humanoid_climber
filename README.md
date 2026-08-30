@@ -14,13 +14,17 @@ UV_PROJECT_ENVIRONMENT=.venv-rl uv sync
 
 Downloaded checkpoints belong in `ckpt/` and are ignored by Git.
 
-## System goal: a safety-aware mixture of policies
+## System goal: a safety-aware library of validated baselines
 
 No single controller is expected to handle every mountain condition. The
-target system is a **hard-gated mixture of specialist policies**. A supervisor
-estimates the environment and robot state, scores every policy against its
-verified operating envelope, switches with hysteresis, and reports
-`NO_SAFE_POLICY` when no controller is suitable.
+target system is a **hard-gated library of baseline policies**. The stock flat
+walker is the first baseline. If measured conditions remain inside its verified
+tolerance, the supervisor uses it. Conditions outside that envelope are trained
+in a separate environment; after the resulting policy passes controlled
+evaluation, it is added as another baseline with its own verified envelope. A
+supervisor estimates the environment and robot state, scores every baseline
+against its envelope, switches with hysteresis, and reports `NO_SAFE_POLICY`
+when no controller is suitable.
 
 The first version will switch complete policies rather than blend their actions.
 This is easier to validate and avoids producing an untested action between two
@@ -34,8 +38,8 @@ recovery and locomotion observation spaces are different.
 |---:|---|---|---|---|
 | 1 | Flat-ground walker | **Available** | Flat ground, friction `0.3–1.2`, no modeled wind | Stock public MjLab G1 checkpoint; local playback works |
 | 2 | Low-friction incline walker | **Available, intermediate** | Gradient `0.0–0.2`; friction `0.1–1.0`; no modeled wind | `model_34400.pt`; improved the matched gradient-`0.2`, friction-`0.15` benchmark but is not yet reliable |
-| 3 | Flat-ground wind walker | **Training** | Flat ground; friction `0.15–1.0`; wind X `-4–4 N`, Y `-16–16 N` | Fine-tuning from the stock walker on a bounded A10G Job |
-| 4 | Supine recovery controller | **Training** | Eight-second supine-to-standing motion; friction `0.3–1.2`; randomized reference state | Native 29-action MjLab tracking policy training from scratch on a bounded A10G Job |
+| 3 | Flat-ground wind walker | **Training disabled** | Flat ground; friction `0.15–1.0`; wind X `-4–4 N`, Y `-16–16 N` | The decision log may show `FINE TUNING NEW POLICY`; no trainer is active |
+| 4 | Supine recovery controller | **Training disabled** | Eight-second supine-to-standing motion; friction `0.3–1.2`; randomized reference state | The decision log may show `FINE TUNING NEW POLICY`; no trainer is active |
 | 5 | Rough-terrain walker | **Planned** | Initial target: friction `0.2–1.0`, gradient `0.0–0.2`, terrain relief `0–0.10 m`, steps `0–0.15 m` | Task, checkpoint, and validated envelope do not exist yet |
 
 These ranges describe training domains or proposed targets, **not automatic
@@ -108,6 +112,29 @@ The overlay is part of the system interface: screenshots and videos should be
 enough to audit what the router believed, why it selected a policy, and whether
 the actual robot response matched that decision.
 
+### Live policy and event log
+
+`hum-climber-play --viewer viser` installs a repository-owned **Policy
+Supervisor** panel with a dedicated **Decision Log** tab. The pre-action routing
+pass reads the actual MuJoCo terrain geometry, randomized foot friction, applied
+torso wrench, and torso pose. That same pass selects the callable which produces
+the next 29-joint action, so the log's `ACTUALLY EXECUTING` line cannot silently
+diverge from the controller driving the robot.
+
+The current router has exactly four user-facing policy classes: regular flat
+walking, low-friction incline walking, wind walking, and fall recovery. Rough,
+stepped, combined, or out-of-envelope conditions are logged as unknown and use
+the closest **loaded** policy as an explicit fallback. The local checkout
+currently contains only `g1_velocity_model_final.pt`, so the live demo truthfully
+labels incline, wind, and recovery requests as flat-walker fallbacks until their
+compatible checkpoints are present.
+
+Unknown or unavailable-policy events emit a `FINE TUNING NEW POLICY` entry in
+the decision log, including the sensed context and requested policy. This is a
+signal only: there is no fine-tuning queue, callback, subprocess, network upload,
+or weight mutation. `hum-climber-train` is hard-disabled until the project
+explicitly implements and enables that path.
+
 ### Scenario generation
 
 The policy supervisor will be tested with two complementary kinds of continuous
@@ -127,6 +154,94 @@ simulation:
 Training randomization and evaluation randomization must remain separate.
 Scripted runs establish comparable benchmarks; seeded random runs discover
 unexpected interactions and policy-boundary failures.
+
+## Controlled and randomized treadmill environments
+
+The first controlled/randomized scenario pair is implemented as two separate tasks:
+
+- `HumClimber-Velocity-Controlled-Unitree-G1` is the admission benchmark. It
+  uses seed `42`, flat terrain, friction `0.6`, no wind or pushes, the nominal
+  robot model, a clean initial state, and a fixed `0.5 m/s` forward command.
+- `HumClimber-Velocity-Randomized-Unitree-G1` is one visible `200 × 5 m` flat
+  treadmill strip. The command remains `0.5 m/s` forward while wind, ice, and
+  slope occur one at a time for `3–8 s`, with a neutral `2–5 s` break after
+  every event.
+  Spawn state, joint state, encoder bias, torso inertia/COM, joint dynamics, PD
+  gains, and action latency are also sampled within bounded ranges.
+
+The randomized task deliberately has no slope grid, obstacle field, roughness
+patches, or stairs. The robot keeps walking forward on the single flat strip as the
+surrounding conditions change in time, which acts like successive treadmill
+windows without teleporting the robot between terrain tiles. Dynamic ranges are:
+
+| Condition | Randomized range |
+|---|---|
+| Foot friction | Normal `0.65–1.0`; ice event `0.05–0.18` |
+| Slope gradient | `-0.20–0.20` (downhill to uphill), changed every `3–8 s` |
+| Wind force | X `-8–8 N`, Y `-20–20 N`, Z `-3–3 N` |
+| Velocity command | Fixed X `+0.5 m/s`; Y and yaw `0` |
+| Event window | One of wind, ice, or slope for `3–8 s` |
+| Neutral break | Flat, no wind, normal grip for `2–5 s` between events |
+| Root pose and velocity | Random XYZ/RPY offsets and initial velocity |
+| Joint state | Position `±0.08 rad`, velocity `±0.15 rad/s` |
+| Encoder bias | `±0.02 rad` |
+| Torso density/COM | Log density scale `±0.08`, COM `±0.02 m` |
+| Joint dynamics | Damping/friction `0.8–1.2×`, armature `0.9–1.1×` |
+| PD gains | Stiffness and damping `0.85–1.15×` |
+| Action latency | `0–2` physics steps |
+
+Both tasks preserve the stock walker's 99-observation actor and 29-action
+interface. For now they are playback and decision-signal environments only.
+Training execution is intentionally disabled.
+
+The ice phase is rendered as a translucent blue treadmill surface. The slope
+phase keeps the same physical gradient range and adds a blue-to-red color ramp
+around the robot to make uphill/downhill direction visible; the color ramp does
+not make the slope steeper or add collision geometry.
+
+### Sensor-only imbalance recovery
+
+The live Viser supervisor detects a developing fall using only the G1's IMU
+up-vector, IMU roll/pitch angular velocity, and two foot-contact readings. It
+does not read the robot's position, treadmill dimensions, edge distance,
+commanded velocity, slope state, or any other environment parameter. A short
+six-sample persistence check rejects the transient tilt and contact changes of
+a normal walking stride. A persistent dynamic tip, severe body tilt, or tilted
+and rotating loss of both foot contacts bypasses the walking checkpoint, zeros
+the locomotion command and planar velocity, and holds a deterministic 29-joint
+crouched sit for two seconds. Vertical velocity remains under physics control so
+the body can settle onto the treadmill instead of being suspended mid-crouch.
+Because no trained stand-up policy exists yet, the environment then resets and
+resumes walking rather than remaining permanently latched. Its
+concise decision-log entry is:
+
+`Detected imbalance, executing sit-down recovery policy.`
+
+Play the controlled benchmark:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-rl uv run hum-climber-play \
+  HumClimber-Velocity-Controlled-Unitree-G1 \
+  --checkpoint-file ./ckpt/g1_velocity_model_final.pt \
+  --num-envs 1 \
+  --viewer viser
+```
+
+Run the randomized treadmill with the same checkpoint:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-rl uv run hum-climber-play \
+  HumClimber-Velocity-Randomized-Unitree-G1 \
+  --checkpoint-file ./ckpt/g1_velocity_model_final.pt \
+  --num-envs 1 \
+  --viewer viser
+```
+
+When the router sees a condition outside the loaded baseline's envelope, the
+Decision Log records `FINE TUNING NEW POLICY` and continues with the explicitly
+displayed loaded fallback. It does not launch the existing Hugging Face wrappers
+or the MjLab trainer. Running `hum-climber-train` exits immediately with a
+training-disabled message.
 
 ### Persistent simulation after a fall
 
@@ -187,8 +302,6 @@ existing checkpoint was not trained with wind, so this mode measures robustness
 rather than wind-trained performance. Viser displays the applied wind above the
 robot as a cyan direction arrow and a label such as `WIND +Y | 16 N`.
 The direction and magnitude appear in bold black directly above the arrow.
-Bold black `CMD` and `ACTUAL` speed labels appear below the purple commanded
-velocity and sky-blue measured-velocity arrows.
 
 To isolate wind from the slope, run the stock checkpoint on flat terrain with
 fixed friction `0.15` and the same `16 N` crosswind:
@@ -206,6 +319,10 @@ checkpoint. The latter will be evaluated and added only after the active
 fine-tuning Job produces a candidate model.
 
 ## Fine-tune on ice
+
+> Historical runbook only. Training is currently hard-disabled by
+> `hum-climber-train`; the commands in this section are retained for provenance
+> and will exit without launching a trainer.
 
 Fine-tuning starts from the existing flat-walking checkpoint. Training uses a
 terrain curriculum from flat ground through a 0.2 gradient while randomizing
@@ -272,7 +389,7 @@ UV_PROJECT_ENVIRONMENT=.venv-rl uv sync
 UV_PROJECT_ENVIRONMENT=.venv-rl uv run pytest -q
 ```
 
-The validated suite currently contains 13 configuration tests. Training uses
+The validated suite currently contains 53 tests. Training uses
 Linux/NVIDIA; macOS is used for editing, CPU smoke tests, evaluation, and Viser
 playback.
 
@@ -482,16 +599,28 @@ for the complete metrics and confidence intervals.
 - Defined the five-policy portfolio and the planned `NO_SAFE_POLICY` supervisor
   behavior for unsupported conditions.
 
+### August 29, 2026 — controlled/randomized environment pair
+
+- Added a deterministic controlled benchmark and a fully domain-randomized
+  training task while preserving the stock 99-observation/29-action interface.
+- Randomized terrain, contact, weather, disturbance, command, initial state,
+  sensor, inertial, joint, actuator, and latency parameters within documented
+  physical bounds.
+- Completed a two-environment CPU smoke test through one PPO update for the
+  randomized task.
+
 ## Current status
 
 - Latest recovered checkpoint: `model_34400.pt` (kept outside Git).
 - Best measured condition: friction `0.15`, gradient `0.2`, with 31.25% of
   episodes completing the 10-second benchmark.
-- Flat-wind and supine-recovery specialists are actively training on separate
-  bounded A10G Jobs.
-- Next work: recover and evaluate both candidate checkpoints, implement the
-  policy registry/context estimator/safety gate, and add the rough-terrain
-  specialist. See [ideas.md](ideas.md).
+- No training job or automatic training path is active. The CLI rejects training
+  attempts and the router only emits fine-tuning templates in the decision log.
+- Controlled and randomized-treadmill playback environments are available; no
+  randomized generalist checkpoint has been promoted.
+- Next work: exercise and refine the continuous treadmill scenario and implement
+  the baseline registry/context estimator/safety gate. Training remains deferred
+  until explicitly enabled later. See [ideas.md](ideas.md).
 
 ## Tests
 
