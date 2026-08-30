@@ -200,6 +200,11 @@ class MuJoCoEngine:
         self._cheat_root_clearance_m = 0.0
         self._cheat_yaw_rad = 0.0
         self._cheat_joint_qpos: np.ndarray | None = None
+        self._hold_joint_qpos: np.ndarray | None = None
+        self._stand_lock_xy = np.zeros(2, dtype=np.float64)
+        self._stand_lock_quat = np.asarray((1.0, 0.0, 0.0, 0.0), dtype=np.float64)
+        self._stand_lock_enabled = True
+        self._stand_lock_min_z = 0.0
         # The bundled checkpoint was trained on flat terrain. Start stationary
         # on the Everest slope; walking commands remain available over the API.
         self._command = (0.0, 0.0, 0.0)
@@ -264,12 +269,18 @@ class MuJoCoEngine:
         if self._policy is not None:
             self._policy.last_action.fill(0.0)
         mujoco.mj_forward(self.model, self.data)
+        self._align_home_to_local_terrain()
         self._cheat_root_clearance_m = float(
             self.data.qpos[2]
             - self._terrain_height(float(self.data.qpos[0]), float(self.data.qpos[1]))
         )
         self._cheat_yaw_rad = self._yaw_from_quaternion_wxyz(self.data.qpos[3:7])
         self._cheat_joint_qpos = np.asarray(self.data.qpos[7:], dtype=np.float64).copy()
+        self._hold_joint_qpos = np.asarray(self.data.qpos[7:], dtype=np.float64).copy()
+        self._stand_lock_xy = np.asarray(self.data.qpos[:2], dtype=np.float64).copy()
+        self._stand_lock_quat = np.asarray(self.data.qpos[3:7], dtype=np.float64).copy()
+        self._stand_lock_enabled = True
+        self._stand_lock_min_z = float(self.data.qpos[2] - 0.08)
         self.model.hfield_data[:] = self._base_hfield_data
         self._mpm_reactions = {}
         self._next_mpm_time = 0.0
@@ -281,6 +292,52 @@ class MuJoCoEngine:
         # Keep the marker alive across several publications so a slower poll
         # cannot silently miss a reset event.
         self._reset_frames_remaining = 3
+
+    def _align_home_to_local_terrain(self) -> None:
+        """Align the canonical flat-floor keyframe to the local DEM tangent.
+
+        The origin is sloped enough that the upstream flat-floor pose starts
+        with only one sole touching. The controller then tips/slides before
+        snow settlement can be distinguished from a fall. Preserve the home
+        articulation and heading, rotate the floating base onto the local
+        tangent, and lower it only until both MuJoCo soles report contact.
+        """
+        x = float(self.data.qpos[0])
+        y = float(self.data.qpos[1])
+        sample = 0.08
+        dz_dx = (
+            self._terrain_height(x + sample, y) - self._terrain_height(x - sample, y)
+        ) / (2.0 * sample)
+        dz_dy = (
+            self._terrain_height(x, y + sample) - self._terrain_height(x, y - sample)
+        ) / (2.0 * sample)
+        normal = np.asarray((-dz_dx, -dz_dy, 1.0), dtype=np.float64)
+        normal /= np.linalg.norm(normal)
+        yaw = self._yaw_from_quaternion_wxyz(self.data.qpos[3:7])
+        forward = np.asarray(
+            (math.cos(yaw), math.sin(yaw), dz_dx * math.cos(yaw) + dz_dy * math.sin(yaw)),
+            dtype=np.float64,
+        )
+        forward -= normal * np.dot(forward, normal)
+        forward /= np.linalg.norm(forward)
+        left = np.cross(normal, forward)
+        left /= np.linalg.norm(left)
+        rotation = np.column_stack((forward, left, normal))
+        quaternion = np.empty(4, dtype=np.float64)
+        mujoco.mju_mat2Quat(quaternion, rotation.ravel())
+        self.data.qpos[3:7] = quaternion
+        mujoco.mj_forward(self.model, self.data)
+
+        # Descend at sub-millimetre resolution. The upper bound is far below
+        # a snow layer thickness and only compensates the sole/DEM mismatch
+        # introduced by rotating the authored flat-floor pose.
+        for _ in range(24):
+            if all(item["contact"] for item in self._foot_contact_telemetry().values()):
+                break
+            self.data.qpos[2] -= 0.0005
+            mujoco.mj_forward(self.model, self.data)
+        self.data.qvel[:] = 0.0
+        self.data.qacc[:] = 0.0
 
     def _publish_snapshot(self) -> None:
         """Replace the latest frame atomically; readers never see partial poses."""
@@ -498,6 +555,12 @@ class MuJoCoEngine:
                     "manual_force_mode": self._manual_force_mode,
                     "manual_nudge_force_n": self._manual_nudge_force_n,
                     "manual_turn_torque_nm": self._manual_turn_torque_nm,
+                    "stand_lock_active": (
+                        self._stand_lock_enabled
+                        and not self._cheat_mode
+                        and not self._manual_force_mode
+                    ),
+                    "stand_lock_max_settlement_m": 0.08,
                     "cheat_speed_m_s": self._cheat_speed_m_s,
                     "cheat_yaw_rate_rad_s": self._cheat_yaw_rate_rad_s,
                 },
@@ -536,6 +599,8 @@ class MuJoCoEngine:
             ):
                 raise ValueError("Movement is disabled by the active weather risk gate")
             self._command = command
+            if any(abs(item) > 1.0e-6 for item in command):
+                self._stand_lock_enabled = False
             return
 
         with self._lock:
@@ -663,6 +728,8 @@ class MuJoCoEngine:
             elif action == "cheat_mode":
                 enabled = bool(value)
                 if enabled != self._cheat_mode:
+                    if enabled:
+                        self._stand_lock_enabled = False
                     self._cheat_mode = enabled
                     if enabled:
                         self._manual_force_mode = False
@@ -680,6 +747,8 @@ class MuJoCoEngine:
                 self._publish_snapshot()
             elif action == "manual_force_mode":
                 self._manual_force_mode = bool(value)
+                if self._manual_force_mode:
+                    self._stand_lock_enabled = False
                 self._command = (0.0, 0.0, 0.0)
                 self._publish_snapshot()
             elif action == "terrain_edit" and isinstance(value, dict):
@@ -1255,7 +1324,13 @@ class MuJoCoEngine:
             self._advance_cheat_to(target)
             return
         while self.data.time + self.model.opt.timestep * 0.5 < target:
-            if self._policy is not None and self.data.time + 1.0e-9 >= self._next_policy_time:
+            moving_command = any(abs(item) > 1.0e-6 for item in self._command)
+            if (
+                self._policy is not None
+                and moving_command
+                and not self._manual_force_mode
+                and self.data.time + 1.0e-9 >= self._next_policy_time
+            ):
                 observation = self._policy.observation(
                     self.data,
                     self.model,
@@ -1269,6 +1344,18 @@ class MuJoCoEngine:
                     self.model.actuator_ctrlrange[:, 1],
                 )
                 self._next_policy_time += self._policy_period
+            elif not moving_command and not self._manual_force_mode and self._hold_joint_qpos is not None:
+                # A zero velocity command is a stand/hold request, not an
+                # instruction to let the flat-terrain policy free-run. The
+                # bundled checkpoint has no slope-aware foothold controller;
+                # allowing it to produce autonomous motion at startup makes
+                # the robot slide/fall and look like it is sinking through
+                # the snow. Explicit nonzero commands still use the policy.
+                self.data.ctrl[:] = np.clip(
+                    self._hold_joint_qpos,
+                    self.model.actuator_ctrlrange[:, 0],
+                    self.model.actuator_ctrlrange[:, 1],
+                )
             previous_time = float(self.data.time)
             previous_qpos = self.data.qpos.copy()
             previous_qvel = self.data.qvel.copy()
@@ -1300,6 +1387,19 @@ class MuJoCoEngine:
                 self.data.xfrc_applied[pelvis, :2] -= np.asarray(self.data.qvel[:2]) * 42.0
                 self.data.xfrc_applied[pelvis, 5] -= float(self.data.qvel[5]) * 7.0
             mujoco.mj_step(self.model, self.data)
+            if self._stand_lock_enabled and not moving_command and not self._manual_force_mode:
+                # Settlement-inspection constraint: keep the unsupported
+                # flat-ground controller from translating or toppling the
+                # floating base while leaving vertical motion and all foot/
+                # snow contacts dynamic. This is reported in state as
+                # stand_lock_active and disengages for every explicit control
+                # or locomotion command.
+                self.data.qpos[:2] = self._stand_lock_xy
+                self.data.qpos[3:7] = self._stand_lock_quat
+                self.data.qpos[2] = max(float(self.data.qpos[2]), self._stand_lock_min_z)
+                self.data.qvel[:2] = 0.0
+                self.data.qvel[3:6] = 0.0
+                mujoco.mj_forward(self.model, self.data)
             finite = all(
                 np.isfinite(values).all()
                 for values in (self.data.qpos, self.data.qvel, self.data.qacc)

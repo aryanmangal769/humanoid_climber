@@ -719,9 +719,10 @@ namespace EverestSim
             var sourceStatus = source?.Value<string>("status") ?? "disconnected";
             var sourceKind = source?.Value<string>("kind") ?? "unknown";
             var ageMs = source?.Value<float?>("age_ms");
+            var standLock = state?["simulation_settings"]?.Value<bool?>("stand_lock_active") ?? false;
             var modeLabel = _dataMode == "live"
                 ? $"LIVE {sourceStatus.ToUpperInvariant()}"
-                : $"SIM {simTime:0.00}s";
+                : standLock ? $"SIM HOLD {simTime:0.00}s" : $"SIM {simTime:0.00}s";
             GUILayout.Label(modeLabel, sourceStatus == "connected" ? _tiny : _warn, GUILayout.Width(narrow ? 92f : 124f));
             GUILayout.Label(_surface.ToUpperInvariant(), _tiny, GUILayout.Width(narrow ? 42f : 48f));
             if (_dataMode == "live" && !compact)

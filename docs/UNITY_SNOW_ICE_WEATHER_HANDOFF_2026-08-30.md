@@ -541,3 +541,29 @@ process-separated MPM worker and/or deeper solver/grid changes.
   layer-breakthrough, reaction-closure, and grid/time-step convergence tests.
 - The bundled G1 policy was trained for flat terrain and still falls on the
   Everest slope independently of the deformation renderer.
+
+## 2026-08-30 startup sinkage correction
+
+The startup trace exposed a presentation/controls failure that looked like
+full-depth sinking: a zero-command G1 was still free-running the flat-terrain
+velocity policy, sliding downhill and losing its feet while the snow surface
+remained mostly intact. The reset pose also had only one sole touching the
+local DEM because the canonical home keyframe was flat-floor aligned.
+
+The reset path now aligns the base to the local DEM tangent and makes a small
+sub-centimetre descent until both soles are initially supported. A zero
+command is now an explicit stand/hold request: the authored home joint pose is
+held and the base's XY/yaw are locked only until the operator sends a movement,
+manual-force, or cheat command. This keeps settlement inspection stationary
+without snapping a robot back after it has been intentionally moved.
+
+On the RTX 4090 startup regression, the fixed robot stayed at the spawn XY
+(`0.0 m` translation) for 3.0 simulated seconds. The snow column retained
+approximately `0.369--0.400 m` of its `0.40 m` depth under the feet; maximum
+localized surface sinkage was `0.0305 m`, with p90 sinkage below `0.0001 m`.
+The pelvis settled by about `1.4 cm` and did not slide downhill. This is the
+expected behavior: localized compression, not a robot disappearing through
+the full layer.
+
+The HUD reports this startup state as `SIM HOLD` so an operator can distinguish
+intentional stationary settlement inspection from an active locomotion run.
