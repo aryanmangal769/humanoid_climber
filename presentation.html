@@ -979,17 +979,6 @@
       height: 21rem;
     }
 
-    .replay-hint {
-      position: absolute;
-      left: 50%;
-      bottom: 1.1rem;
-      transform: translateX(-50%);
-      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-      font-size: 0.68rem;
-      letter-spacing: 0.08em;
-      color: var(--faint);
-    }
-
     .os-story {
       position: relative;
       min-height: 0;
@@ -1091,7 +1080,7 @@
       place-items: center;
       padding: 0.55rem 0.45rem;
       text-align: center;
-      font-size: 0.9rem;
+      font-size: 1rem;
       font-weight: 720;
       line-height: 1.1;
     }
@@ -1099,7 +1088,7 @@
     .summit-core {
       position: absolute;
       left: 50%;
-      top: 13.7rem;
+      top: 15.2rem;
       z-index: 7;
       width: 24rem;
       height: 12.4rem;
@@ -1143,7 +1132,7 @@
     .core-role {
       margin-top: 0.38rem;
       font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-      font-size: 0.6rem;
+      font-size: 0.68rem;
       font-weight: 730;
       letter-spacing: 0.1em;
       text-transform: uppercase;
@@ -1209,14 +1198,14 @@
 
     .flow-node b {
       display: block;
-      font-size: 1rem;
+      font-size: 1.22rem;
       line-height: 1.1;
     }
 
     .flow-node small {
       display: block;
       margin-top: 0.28rem;
-      font-size: 0.68rem;
+      font-size: 0.82rem;
       line-height: 1.25;
       color: var(--muted);
     }
@@ -1251,7 +1240,7 @@
     .unknown-state {
       position: absolute;
       left: 62%;
-      top: 3.3rem;
+      top: 4.8rem;
       min-width: 12rem;
       padding: 0.55rem 0.75rem;
       text-align: center;
@@ -1264,7 +1253,7 @@
     .server-node {
       position: absolute;
       right: 1rem;
-      top: 7.8rem;
+      top: 9.3rem;
       width: 15rem;
       min-height: 4.4rem;
       display: grid;
@@ -1283,12 +1272,12 @@
       color: var(--ice);
     }
 
-    .server-node b { display: inline; font-size: 1rem; }
+    .server-node b { display: inline; font-size: 1.22rem; }
     .server-node small { max-width: 12rem; margin: 0.3rem auto 0; }
 
     .training-node {
       left: 50%;
-      top: 18rem;
+      top: 19.5rem;
       margin-left: -9rem;
       width: 18rem;
       min-height: 7rem;
@@ -1305,21 +1294,34 @@
       position: absolute;
       left: 50%;
       z-index: 2;
-      top: 18rem;
-      width: 32rem;
-      height: 7rem;
-      margin-left: -16rem;
+      top: 18.2rem;
+      width: 40rem;
+      height: 9rem;
+      margin-left: -20rem;
       display: grid;
       grid-template-columns: repeat(8, 1fr);
-      grid-template-rows: repeat(2, 1fr);
+      grid-template-rows: 1.25rem repeat(2, 1fr);
       gap: 0.24rem;
-      padding: 0.35rem;
+      padding: 0.45rem;
       border: 1px solid rgba(242, 188, 109, 0.42);
       border-radius: 0.65rem;
       background: rgba(11, 24, 27, 0.96);
       box-shadow: 0 1rem 2rem rgba(0, 0, 0, 0.28);
       opacity: 0;
       transform-origin: center;
+    }
+
+    .training-sim-grid::before {
+      content: "RL training";
+      grid-column: 1 / -1;
+      align-self: center;
+      text-align: center;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.88rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #ffd99f;
     }
 
     .training-sim-grid video {
@@ -1342,20 +1344,20 @@
       padding: 0.3rem 0.5rem;
       border-radius: 0.35rem;
       font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-      font-size: 0.62rem;
+      font-size: 0.75rem;
       font-weight: 760;
       letter-spacing: 0.06em;
       text-transform: uppercase;
       background: #0a1c21;
     }
 
-    .request-label { right: 16rem; top: 5.6rem; color: var(--signal); }
+    .request-label { right: 15rem; top: 7.15rem; color: var(--signal); }
     .return-label { left: 17rem; top: 5.6rem; color: var(--safe); }
 
     .new-policy {
       position: absolute;
       left: 1rem;
-      top: 7.8rem;
+      top: 9.3rem;
       min-width: 15rem;
       min-height: 4.4rem;
       display: grid;
@@ -1468,7 +1470,12 @@
       animation: none;
     }
 
-    body.preview-learning .slide-3 .learning-flow .training-sim-grid { opacity: 0; }
+    body.preview-learning .slide-3 .learning-flow .training-sim-grid {
+      opacity: 1;
+      transform: scale(0.72);
+    }
+
+    body.preview-learning .slide-3 .learning-flow .training-node { opacity: 0; }
 
     body.preview-simulation .slide-3 .policy-bank,
     body.preview-simulation .slide-3 .runtime-flow { opacity: 0; }
@@ -1604,12 +1611,11 @@
     @keyframes learn-sim-grid {
       0%, 74% { opacity: 0; transform: scale(0.92); }
       78%, 84% { opacity: 1; transform: scale(1); }
-      88%, 100% { opacity: 0; transform: scale(0.22); }
+      90%, 100% { opacity: 1; transform: scale(0.72); }
     }
 
     @keyframes learn-training {
-      0%, 84% { opacity: 0; transform: scale(0.78); }
-      89%, 100% { opacity: 1; transform: scale(1); }
+      0%, 100% { opacity: 0; }
     }
 
     @keyframes learn-training-route {
@@ -1836,7 +1842,6 @@
           </div>
         </div>
 
-        <div class="replay-hint">R to replay animation</div>
       </div>
 
       <footer class="footer">
@@ -1902,9 +1907,9 @@
               <marker id="arrow-ice" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5 0 10Z" fill="#9ee8f2"/></marker>
               <marker id="arrow-safe-runtime" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5 0 10Z" fill="#82d6a8"/></marker>
             </defs>
-            <path d="M90 80L444 57" marker-end="url(#arrow-ice)"/>
-            <path d="M90 160L444 57" marker-end="url(#arrow-ice)"/>
-            <path class="return-path" d="M444 57L798 120" marker-end="url(#arrow-safe-runtime)"/>
+            <path d="M90 80Q270 70 444 78" marker-end="url(#arrow-ice)"/>
+            <path d="M90 160Q270 145 444 78" marker-end="url(#arrow-ice)"/>
+            <path class="return-path" d="M444 78Q620 82 798 120" marker-end="url(#arrow-safe-runtime)"/>
           </svg>
         </div>
 
@@ -1929,7 +1934,7 @@
             <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
             <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
           </div>
-          <div class="flow-node training-node"><b>RL training</b><small>16 simulations merged</small></div>
+          <div class="flow-node training-node"><b>RL training</b></div>
           <div class="flow-node new-policy"><b>New policy added</b><small>Available for future deployment</small></div>
           <span class="request-label">Environment conditions</span>
           <span class="return-label">Trained policy</span>
@@ -1938,14 +1943,13 @@
               <marker id="arrow-request" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5 0 10Z" fill="#f2bc6d"/></marker>
               <marker id="arrow-safe-learning" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5 0 10Z" fill="#82d6a8"/></marker>
             </defs>
-            <path class="request-path" d="M444 57L802 102" marker-end="url(#arrow-request)"/>
-            <path class="training-path" d="M802 102L444 211" marker-end="url(#arrow-request)"/>
-            <path class="policy-path" d="M444 211L85 102" marker-end="url(#arrow-safe-learning)"/>
-            <path class="return-path" d="M85 102L444 57" marker-end="url(#arrow-safe-learning)"/>
+            <path class="request-path" d="M444 78Q650 68 802 126" marker-end="url(#arrow-request)"/>
+            <path class="training-path" d="M802 126Q700 205 444 220" marker-end="url(#arrow-request)"/>
+            <path class="policy-path" d="M444 220Q188 205 85 126" marker-end="url(#arrow-safe-learning)"/>
+            <path class="return-path" d="M85 126Q238 68 444 78" marker-end="url(#arrow-safe-learning)"/>
           </svg>
         </div>
 
-        <div class="replay-hint">R to replay animation</div>
       </div>
 
       <footer class="footer">

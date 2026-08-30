@@ -458,7 +458,7 @@ def test_treadmill_play_mode_uses_one_long_flat_strip() -> None:
   assert TREADMILL_ROUGH_COLS == 80
   assert TREADMILL_ROUGH_MOUND_COUNT == 480
   assert TREADMILL_ROCK_COUNT == 128
-  assert MOUNTAIN_COUNT == 52
+  assert MOUNTAIN_COUNT == 62
   assert MOUNTAIN_LATERAL_BANDS_M == (24.0, 38.0)
   assert MOUNTAIN_STATION_X_M[0] == -240.0
   assert MOUNTAIN_STATION_X_M[-1] == 240.0

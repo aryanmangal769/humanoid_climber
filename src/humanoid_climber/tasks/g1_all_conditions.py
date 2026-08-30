@@ -92,8 +92,11 @@ TREADMILL_ROUGH_MOUND_COUNT = TREADMILL_ROUGH_ROWS * TREADMILL_ROUGH_COLS
 TREADMILL_ROCK_COUNT = 128
 MOUNTAIN_STATION_X_M = tuple(float(x) for x in range(-240, 241, 40))
 MOUNTAIN_LATERAL_BANDS_M = (24.0, 38.0)
+MOUNTAIN_END_X_M = (-270.0, 270.0)
+MOUNTAIN_END_Y_M = (-48.0, -24.0, 0.0, 24.0, 48.0)
 MOUNTAIN_COUNT = (
   len(MOUNTAIN_STATION_X_M) * len(MOUNTAIN_LATERAL_BANDS_M) * 2
+  + len(MOUNTAIN_END_X_M) * len(MOUNTAIN_END_Y_M)
 )
 # Neutral ground is cool mineral frost rather than fresh snow. A future snow
 # event can therefore use the brighter reserved color and remain unambiguous.
@@ -362,7 +365,7 @@ def _make_treadmill_dynamic(cfg: ManagerBasedRlEnvCfg) -> None:
     # Layered, visual-only alpine ridges frame the route without adding any
     # contacts or affecting terrain probes. Large ellipsoids are partially
     # buried so only their upper profiles read as distant mountain masses.
-    mountain_peaks = tuple(
+    side_mountain_peaks = tuple(
       (
         x + (20.0 * band) + (side * 7.0 if station % 2 else 0.0),
         side
@@ -378,6 +381,18 @@ def _make_treadmill_dynamic(cfg: ManagerBasedRlEnvCfg) -> None:
       for band, lateral_band in enumerate(MOUNTAIN_LATERAL_BANDS_M)
       for side in (-1, 1)
     )
+    end_mountain_peaks = tuple(
+      (
+        x + (6.0 if (end + lateral) % 2 else -6.0),
+        y + (5.0 if lateral % 2 else -5.0),
+        13.0 + 2.0 * ((end + lateral) % 3),
+        25.0 + 3.0 * ((end * 2 + lateral) % 4),
+        19.0 + 2.0 * ((end + lateral * 2) % 4),
+      )
+      for end, x in enumerate(MOUNTAIN_END_X_M)
+      for lateral, y in enumerate(MOUNTAIN_END_Y_M)
+    )
+    mountain_peaks = side_mountain_peaks + end_mountain_peaks
     for index, (x, y, radius_x, radius_y, radius_z) in enumerate(mountain_peaks):
       shade = 0.24 + 0.018 * (index % 3)
       spec.worldbody.add_geom(
