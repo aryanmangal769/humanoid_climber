@@ -11,6 +11,7 @@ from humanoid_climber.safety import (
   outside_centerline,
   predict_imbalance,
 )
+from humanoid_climber.specialist_policies import RecoveryPolicyAdapter
 from humanoid_climber.viewer import HumanoidClimberViserPlayViewer
 from humanoid_climber.viewer import GROUND_STUCK_RESET_SECONDS
 from humanoid_climber.viewer import SAFETY_REARM_CLEAR_SECONDS
@@ -23,6 +24,7 @@ from humanoid_climber.viewer import _apply_trail_following_command
 from humanoid_climber.viewer import _fmt_balance
 from humanoid_climber.viewer import _ensure_playback_observation_groups
 from humanoid_climber.viewer import _measure_lateral_offset_m
+from humanoid_climber.viewer import _recovery_should_release
 from humanoid_climber.viewer import _robot_state_is_finite
 from humanoid_climber.policy_router import (
   FOUNDATIONAL_POLICY_KEYS,
@@ -37,6 +39,29 @@ from humanoid_climber.trail import TrailFrame, nearest_trail_frame, trail_frame_
 def _up_vector(tilt_degrees: float) -> tuple[float, float, float]:
   tilt = math.radians(tilt_degrees)
   return math.sin(tilt), 0.0, math.cos(tilt)
+
+
+def test_integrated_recovery_matches_standalone_start_frame() -> None:
+  class Scene(dict):
+    env_origins = torch.tensor([[10.0, -4.0, 0.0]])
+
+  robot = SimpleNamespace(
+    data=SimpleNamespace(body_link_pos_w=torch.tensor([[[12.0, -3.0, 0.4]]]))
+  )
+  adapter = object.__new__(RecoveryPolicyAdapter)
+  adapter._env = SimpleNamespace(scene=Scene(robot=robot))
+  adapter._joint_pos = torch.zeros((401, 29))
+  adapter._body_pos = torch.tensor([[[0.5, 0.25, 0.1]]]).repeat(401, 1, 1)
+  adapter._anchor_index = 0
+  adapter._frame = 200
+  adapter._xy_offset = None
+  adapter._active = False
+
+  adapter.start(0, torch.zeros((1, 99)))
+
+  assert adapter._frame == 0
+  assert torch.allclose(adapter._xy_offset, torch.tensor([1.5, 0.75]))
+  assert adapter.active is True
 
 
 def test_robot_state_finite_watchdog_detects_nan() -> None:
@@ -58,7 +83,7 @@ def test_viewer_retains_policy_history_hook() -> None:
   assert callable(HumanoidClimberViserPlayViewer._record_policy_decision)
 
 
-def test_combination_fine_tuning_waits_three_seconds_then_activates(monkeypatch) -> None:
+def test_unknown_combination_can_be_forwarded_to_future_policy_server() -> None:
   context = TerrainContext(
     slope_gradient=0.10,
     friction=0.4,
@@ -76,51 +101,30 @@ def test_combination_fine_tuning_waits_three_seconds_then_activates(monkeypatch)
   )
   log = SupervisorEventLog(stable_observations=1)
   assert log.observe(context, decision, execution, step=1)
-  assert [entry.category for entry in log.entries] == ["FINE TUNING"]
+  assert [entry.category for entry in log.entries] == ["TRAINING_REQUIRED"]
 
   viewer = object.__new__(HumanoidClimberViserPlayViewer)
-  viewer.env = object()
-  viewer._specialist_stage = "idle"
-  viewer._specialist_condition = None
-  viewer._specialist_base_label = None
-  viewer._specialist_wait_steps_remaining = 0
-  viewer._specialist_centered_steps = 0
-  viewer._specialist_promoted = False
-  viewer._fine_tuned_combinations = {}
-  viewer._imbalance_recovery_latched = False
-  viewer._recovery_trigger_reason = ""
-  viewer._recovery_command_snapshot = None
-  viewer._recovery_attack_steps_remaining = 0
-  viewer._supervisor_log = log
-  viewer.get_status = lambda: SimpleNamespace(step_count=151)
-  released: list[bool] = []
-  viewer._release_safety_recovery = lambda: released.append(True)
-  monkeypatch.setattr(
-    "humanoid_climber.viewer._capture_locomotion_command",
-    lambda env, env_idx: None,
+  requests: list[dict[str, object]] = []
+  viewer.env = SimpleNamespace(
+    unwrapped=SimpleNamespace(summitos_policy_request_handler=requests.append)
   )
+  viewer._active_specialist_key = "flat"
 
-  viewer._begin_combination_fine_tuning(decision, step_dt=0.02, env_idx=0)
-  assert viewer._specialist_wait_steps_remaining == 150
-  assert viewer._imbalance_recovery_latched is True
-
-  viewer._specialist_wait_steps_remaining = 0
-  assert viewer._try_activate_specialist(0.02) is True
-  assert decision.terrain_type in viewer._fine_tuned_combinations
-  assert released == [True]
-  assert [entry.category for entry in log.entries] == ["ACTION", "FINE TUNING"]
-  assert "Fine tuned" in log.entries[0].message
-  assert "activating new" in log.entries[0].message
+  assert viewer._submit_policy_training_request(context, decision) is True
+  assert len(requests) == 1
+  assert requests[0]["terrain_type"] == "rough terrain + wind"
+  assert requests[0]["friction"] == pytest.approx(0.4)
+  assert requests[0]["active_policy"] == "flat"
 
 
-def test_ground_stuck_watchdog_requires_ten_continuous_seconds() -> None:
+def test_ground_stuck_watchdog_requires_thirty_continuous_seconds() -> None:
   elapsed = 0.0
   should_reset = False
-  for _ in range(499):
+  for _ in range(1499):
     elapsed, should_reset = _advance_ground_stuck_timer(
       elapsed, fallen=True, step_dt=0.02
     )
-  assert elapsed == pytest.approx(9.98)
+  assert elapsed == pytest.approx(29.98)
   assert should_reset is False
 
   elapsed, should_reset = _advance_ground_stuck_timer(
@@ -128,6 +132,13 @@ def test_ground_stuck_watchdog_requires_ten_continuous_seconds() -> None:
   )
   assert elapsed == pytest.approx(GROUND_STUCK_RESET_SECONDS)
   assert should_reset is True
+
+
+def test_finished_getup_policy_stays_latched_until_robot_is_upright() -> None:
+  assert _recovery_should_release(policy_finished=True, fallen=True) is False
+  assert _recovery_should_release(policy_finished=True, fallen=None) is False
+  assert _recovery_should_release(policy_finished=False, fallen=False) is False
+  assert _recovery_should_release(policy_finished=True, fallen=False) is True
 
 
 def test_safety_rearm_requires_one_continuous_clean_window() -> None:

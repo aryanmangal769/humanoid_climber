@@ -11,6 +11,10 @@ from humanoid_climber.tasks.g1_all_conditions import (
   CONTROLLED_FRICTION,
   CONTROLLED_SEED,
   CONTROLLED_WIND_FORCE_RANGES,
+  EVENT_PATCH_HALF_WIDTH_M,
+  HAZARD_WIDTH_MULTIPLIER,
+  ICE_PATCH_LENGTH_M,
+  ICE_PATCH_HALF_WIDTH_M,
   RANDOM_ACTION_DELAY_STEPS,
   RANDOM_ARMATURE_SCALE_RANGE,
   RANDOM_DENSITY_LOG_SCALE_RANGE,
@@ -46,17 +50,36 @@ from humanoid_climber.tasks.g1_all_conditions import (
   TREADMILL_ROUGH_COLS,
   TREADMILL_ROUGH_MOUND_COUNT,
   TREADMILL_ROUGH_ROWS,
+  SLOPE_PATCH_LENGTH_M,
+  SLOPE_PATCH_HALF_WIDTH_M,
   SLOPE_PATCH_SEGMENT_COUNT,
   TREADMILL_SIZE,
   TREADMILL_SLOPE_DELTA_PER_STEP,
+  FUTURE_SNOW_EVENT_COLOR,
+  HIDDEN_TRAIL_RGBA,
+  MOUNTAIN_COUNT,
+  MOUNTAIN_LATERAL_BANDS_M,
+  MOUNTAIN_STATION_X_M,
+  WINTER_GROUND_BASE_COLOR,
+  WINTER_GROUND_MATERIAL_NAME,
+  WINTER_GROUND_TEXTURE_NAME,
   unitree_g1_controlled_env_cfg,
   unitree_g1_controlled_ppo_runner_cfg,
   unitree_g1_randomized_env_cfg,
   unitree_g1_randomized_ppo_runner_cfg,
 )
 from humanoid_climber.safety import CENTERLINE_MAX_OFFSET_M
-from humanoid_climber.mdp import advance_infinite_trail, sequential_random_events
-from humanoid_climber.trail import TRAIL_SEGMENTS
+from humanoid_climber.mdp import advance_infinite_trail, orchestrated_policy_sequence
+from humanoid_climber.orchestrator import (
+  HIGH_WIND_FORCE_RANGES,
+  INCLINE_FRICTION_RANGE,
+  INCLINE_GRADIENT_RANGE,
+  POLICY_ANNOUNCEMENT_DELAY_SECONDS,
+  SHOWCASE_STAGES,
+  STAGE_DURATION_SECONDS,
+  ShowcaseClock,
+)
+from humanoid_climber.trail import TRAIL_HALF_WIDTH_M, TRAIL_SEGMENTS
 
 
 def _assert_stock_policy_interface(cfg) -> None:
@@ -124,7 +147,7 @@ def test_controlled_environment_pins_every_condition() -> None:
   assert command.ranges.heading is None
 
 
-def test_randomized_environment_samples_all_scenario_conditions() -> None:
+def test_showcase_environment_pins_the_requested_sequence() -> None:
   cfg = unitree_g1_randomized_env_cfg()
   _assert_stock_policy_interface(cfg)
 
@@ -148,16 +171,21 @@ def test_randomized_environment_samples_all_scenario_conditions() -> None:
   assert command.ranges.ang_vel_z == (-0.1, 0.1)
   assert command.rel_forward_envs == 1.0
   assert command.heading_command is False
-  sequencer = cfg.events["sequential_random_events"]
+  assert set(cfg.events) == {
+    "reset_base",
+    "reset_robot_joints",
+    "advance_infinite_trail",
+    "orchestrated_policy_sequence",
+  }
+  sequencer = cfg.events["orchestrated_policy_sequence"]
   assert sequencer.mode == "step"
-  assert sequencer.params["normal_friction_range"] == NORMAL_FRICTION_RANGE
-  assert sequencer.params["ice_friction_range"] == RANDOM_ICE_FRICTION_RANGE
-  assert RANDOM_ICE_FRICTION_RANGE[1] <= 0.04
-  assert sequencer.params["wind_force_ranges"] == RANDOM_WIND_FORCE_RANGES
-  assert sequencer.params["slope_gradient_range"] == RANDOM_SLOPE_GRADIENT_RANGE
-  assert sequencer.params["active_slope_magnitude_range"] == (
-    RANDOM_ACTIVE_SLOPE_MAGNITUDE_RANGE
-  )
+  assert sequencer.func is orchestrated_policy_sequence
+  assert sequencer.params["normal_friction_range"] == (0.8, 0.8)
+  assert sequencer.params["ice_friction_range"] == INCLINE_FRICTION_RANGE
+  assert "wind_ice_friction_range" not in sequencer.params
+  assert sequencer.params["wind_force_ranges"] == HIGH_WIND_FORCE_RANGES
+  assert sequencer.params["slope_gradient_range"] == INCLINE_GRADIENT_RANGE
+  assert sequencer.params["active_slope_magnitude_range"] == INCLINE_GRADIENT_RANGE
   assert sequencer.params["slope_piece_count"] == SLOPE_PATCH_SEGMENT_COUNT
   assert sequencer.params["slope_outer_fraction_range"] == (
     RANDOM_SLOPE_OUTER_FRACTION_RANGE
@@ -165,9 +193,7 @@ def test_randomized_environment_samples_all_scenario_conditions() -> None:
   assert sequencer.params["slope_inner_fraction_range"] == (
     RANDOM_SLOPE_INNER_FRACTION_RANGE
   )
-  assert sequencer.params["event_patch_ahead_range_m"] == (
-    RANDOM_EVENT_PATCH_AHEAD_RANGE_M
-  )
+  assert sequencer.params["event_patch_ahead_range_m"] == (2.0, 2.0)
   assert sequencer.params["rough_surface_height_range_m"] == (
     RANDOM_ROUGH_SURFACE_HEIGHT_RANGE_M
   )
@@ -177,9 +203,12 @@ def test_randomized_environment_samples_all_scenario_conditions() -> None:
   assert sequencer.params["rock_count"] == TREADMILL_ROCK_COUNT
   assert sequencer.params["rough_rows"] == TREADMILL_ROUGH_ROWS
   assert sequencer.params["rough_cols"] == TREADMILL_ROUGH_COLS
-  assert sequencer.params["event_duration_range_s"] == RANDOM_EVENT_DURATION_S
-  assert sequencer.params["break_duration_range_s"] == (
-    RANDOM_EVENT_BREAK_DURATION_S
+  assert sequencer.params["event_duration_range_s"] == (
+    STAGE_DURATION_SECONDS,
+    STAGE_DURATION_SECONDS,
+  )
+  assert sequencer.params["policy_announcement_delay_s"] == (
+    POLICY_ANNOUNCEMENT_DELAY_SECONDS
   )
   assert sequencer.params["max_delta_per_step"] == (
     TREADMILL_SLOPE_DELTA_PER_STEP
@@ -206,61 +235,48 @@ def test_randomized_environment_stays_inside_router_envelope() -> None:
   assert worst_case_wind_n <= 18.0
 
 
-def test_random_event_controller_reports_the_physical_active_condition() -> None:
-  controller = object.__new__(sequential_random_events)
-  controller._manual_mode = torch.tensor([False])
-  controller._phase = torch.tensor([sequential_random_events.ICE])
-  controller._manual_events = torch.zeros(
-    (1, len(sequential_random_events.MANUAL_EVENT_NAMES)), dtype=torch.bool
+def test_showcase_clock_announces_one_second_after_physical_stage() -> None:
+  clock = ShowcaseClock(stage_duration_s=12.0, announcement_delay_s=1.0)
+  assert clock.current.key == "normal"
+  assert clock.requested_policy.key == "normal"
+  assert clock.announcement_ready is False
+  assert clock.advance(1.0) is False
+  assert clock.announcement_ready is True
+  assert clock.advance(11.0) is True
+  assert clock.current.key == "incline"
+  assert clock.requested_policy.key == "incline"
+  assert clock.announcement_ready is False
+  assert clock.advance(0.99) is False
+  assert clock.announcement_ready is False
+  assert clock.advance(0.01) is False
+  assert clock.announcement_ready is True
+
+
+def test_showcase_order_is_fixed_and_repeats() -> None:
+  assert tuple(stage.key for stage in SHOWCASE_STAGES) == (
+    "normal",
+    "incline",
+    "wind",
+    "rough",
   )
-  assert controller.active_event_names(0) == ("ice",)
-
-  controller._phase[0] = sequential_random_events.SLOPE_CLEARING
-  assert controller.active_event_names(0) == ("slope",)
-
-  controller._manual_mode[0] = True
-  ice_idx = sequential_random_events.MANUAL_EVENT_NAMES.index("ice")
-  slope_idx = sequential_random_events.MANUAL_EVENT_NAMES.index("slope")
-  controller._manual_events[0, ice_idx] = True
-  controller._manual_events[0, slope_idx] = True
-  assert controller.active_event_names(0) == ("ice", "slope")
+  clock = ShowcaseClock(stage_duration_s=1.0, announcement_delay_s=0.1)
+  observed = [clock.current.key]
+  for _ in range(4):
+    assert clock.advance(1.0) is True
+    observed.append(clock.current.key)
+  assert observed == ["normal", "incline", "wind", "rough", "normal"]
 
 
-def test_random_slope_profile_uses_multiple_continuous_grades() -> None:
-  controller = object.__new__(sequential_random_events)
-  controller._env = type("Env", (), {"device": torch.device("cpu")})()
-  controller._params = {
-    "slope_outer_fraction_range": (0.55, 0.55),
-    "slope_inner_fraction_range": (0.90, 0.90),
-  }
-  controller._slope_profile_factors = torch.zeros((1, 4))
-
-  controller._sample_slope_profile(torch.tensor([0], dtype=torch.long))
-
-  profile = controller._slope_profile_factors[0]
-  assert profile.tolist() == pytest.approx([0.55, 0.90, -0.90, -0.55])
-  assert abs(float(profile[0])) != pytest.approx(abs(float(profile[1])))
-  assert float(profile.sum()) == pytest.approx(0.0, abs=1.0e-6)
-
-
-def test_automatic_break_does_not_remove_spawned_terrain_patches() -> None:
-  controller = object.__new__(sequential_random_events)
-  controller._phase = torch.tensor([sequential_random_events.ICE])
-  controller._params = {
-    "normal_friction_range": (0.65, 1.0),
-    "break_duration_range_s": (2.0, 5.0),
-  }
-  calls: list[str] = []
-  controller._clear_wind = lambda env_ids: calls.append("wind")
-  controller._set_friction = lambda env_ids, friction_range: calls.append("friction")
-  controller._sample_duration = lambda env_ids, duration_range: calls.append("duration")
-  controller._hide_event_overlays = lambda env_ids: calls.append("hide_overlays")
-  controller._hide_rough_ground = lambda env_ids: calls.append("hide_rough")
-
-  controller._set_break(torch.tensor([0]))
-
-  assert int(controller._phase[0]) == sequential_random_events.BREAK
-  assert calls == ["wind", "friction", "duration"]
+def test_showcase_clock_pauses_during_safety_recovery() -> None:
+  clock = ShowcaseClock(stage_duration_s=12.0, announcement_delay_s=1.0)
+  clock.advance(3.0)
+  clock.pause()
+  assert clock.advance(30.0) is False
+  assert clock.current.key == "normal"
+  assert clock.time_remaining_s == pytest.approx(9.0)
+  clock.resume()
+  assert clock.advance(9.0) is True
+  assert clock.current.key == "incline"
 
 
 def test_treadmill_play_mode_uses_one_long_flat_strip() -> None:
@@ -303,6 +319,40 @@ def test_treadmill_play_mode_uses_one_long_flat_strip() -> None:
     for geom_id in range(model.ngeom)
   }
   assert "treadmill_pitch_marker_0" in marker_names
+  ground_material_id = mujoco.mj_name2id(
+    model,
+    mujoco.mjtObj.mjOBJ_MATERIAL,
+    WINTER_GROUND_MATERIAL_NAME,
+  )
+  ground_texture_id = mujoco.mj_name2id(
+    model,
+    mujoco.mjtObj.mjOBJ_TEXTURE,
+    WINTER_GROUND_TEXTURE_NAME,
+  )
+  assert ground_material_id >= 0
+  assert ground_texture_id >= 0
+  assert tuple(FUTURE_SNOW_EVENT_COLOR[:3]) != WINTER_GROUND_BASE_COLOR
+  assert sum(
+    (snow - ground) ** 2
+    for snow, ground in zip(FUTURE_SNOW_EVENT_COLOR[:3], WINTER_GROUND_BASE_COLOR)
+  ) ** 0.5 > 0.5
+
+  hidden_visual_names = [
+    name
+    for name in marker_names
+    if name is not None
+    and (
+      name.startswith("treadmill_trail_surface_")
+      or name.startswith("treadmill_pitch_marker_")
+      or name.startswith("treadmill_centerline_safety_")
+    )
+  ]
+  assert hidden_visual_names
+  for name in hidden_visual_names:
+    geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
+    assert tuple(model.geom_rgba[geom_id]) == pytest.approx(HIDDEN_TRAIL_RGBA)
+    assert model.geom_contype[geom_id] == 0
+    assert model.geom_conaffinity[geom_id] == 0
   for segment in TRAIL_SEGMENTS:
     for side in ("left", "right"):
       name = f"treadmill_centerline_safety_{side}_{segment.index:03d}"
@@ -332,6 +382,17 @@ def test_treadmill_play_mode_uses_one_long_flat_strip() -> None:
   )
   assert model.geom_friction[ice_patch_id, 1] <= 0.0005
   assert model.geom_friction[ice_patch_id, 2] <= 0.00001
+  assert model.geom_size[ice_patch_id, 0] == pytest.approx(
+    ICE_PATCH_LENGTH_M * 0.5
+  )
+  assert model.geom_size[ice_patch_id, 1] == pytest.approx(
+    ICE_PATCH_HALF_WIDTH_M
+  )
+  assert ICE_PATCH_HALF_WIDTH_M > TRAIL_HALF_WIDTH_M
+  assert HAZARD_WIDTH_MULTIPLIER == 8.0
+  assert ICE_PATCH_HALF_WIDTH_M == pytest.approx(
+    EVENT_PATCH_HALF_WIDTH_M * HAZARD_WIDTH_MULTIPLIER
+  )
 
   for piece in range(SLOPE_PATCH_SEGMENT_COUNT):
     name = f"treadmill_slope_patch_{piece:02d}"
@@ -348,6 +409,15 @@ def test_treadmill_play_mode_uses_one_long_flat_strip() -> None:
     assert model.geom_rgba[slope_patch_id, 3] > 0.8
     assert model.geom_contype[slope_patch_id] == 1
     assert model.geom_conaffinity[slope_patch_id] == 1
+    assert model.geom_size[slope_patch_id, 0] == pytest.approx(
+      SLOPE_PATCH_LENGTH_M / (2.0 * SLOPE_PATCH_SEGMENT_COUNT)
+    )
+    assert model.geom_size[slope_patch_id, 1] == pytest.approx(
+      SLOPE_PATCH_HALF_WIDTH_M
+    )
+    assert SLOPE_PATCH_HALF_WIDTH_M == pytest.approx(
+      EVENT_PATCH_HALF_WIDTH_M * HAZARD_WIDTH_MULTIPLIER
+    )
 
   assert not any(
     name is not None and name.startswith("treadmill_ice_overlay_")
@@ -369,6 +439,22 @@ def test_treadmill_play_mode_uses_one_long_flat_strip() -> None:
   )
   assert len(mound_names) == TREADMILL_ROUGH_MOUND_COUNT
   assert len(rock_names) == TREADMILL_ROCK_COUNT
+  assert RANDOM_ROUGH_LATERAL_RANGE_M == pytest.approx((-6.56, 6.56))
+  assert TREADMILL_ROUGH_COLS == 40
+  assert TREADMILL_ROCK_COUNT == 64
+  assert MOUNTAIN_COUNT == 52
+  assert MOUNTAIN_LATERAL_BANDS_M == (24.0, 38.0)
+  assert MOUNTAIN_STATION_X_M[0] == -240.0
+  assert MOUNTAIN_STATION_X_M[-1] == 240.0
+  for index in range(MOUNTAIN_COUNT):
+    for prefix in ("alpine_mountain", "alpine_snowcap"):
+      geom_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_GEOM, f"{prefix}_{index:02d}"
+      )
+      assert geom_id >= 0
+      assert model.geom_contype[geom_id] == 0
+      assert model.geom_conaffinity[geom_id] == 0
+      assert model.geom_group[geom_id] == 2
   rough_body_id = mujoco.mj_name2id(
     model, mujoco.mjtObj.mjOBJ_BODY, "treadmill_rough_patch_body"
   )
@@ -399,7 +485,7 @@ def test_treadmill_play_mode_uses_one_long_flat_strip() -> None:
     assert model.geom_conaffinity[geom_id] == 1
 
 
-def test_randomized_environment_samples_robot_and_sensor_parameters() -> None:
+def test_showcase_removes_unrelated_randomization() -> None:
   cfg = unitree_g1_randomized_env_cfg()
 
   assert cfg.rewards
@@ -407,43 +493,27 @@ def test_randomized_environment_samples_robot_and_sensor_parameters() -> None:
   assert cfg.terminations
 
   assert cfg.events["reset_base"].params == {
-    "pose_range": RANDOM_ROOT_POSE_RANGES,
-    "velocity_range": RANDOM_ROOT_VELOCITY_RANGES,
+    "pose_range": PLAYBACK_ROOT_POSE_RANGES,
+    "velocity_range": PLAYBACK_ROOT_VELOCITY_RANGES,
   }
   assert cfg.events["reset_robot_joints"].params["position_range"] == (
-    RANDOM_JOINT_POSITION_RANGE
+    PLAYBACK_JOINT_POSITION_RANGE
   )
   assert cfg.events["reset_robot_joints"].params["velocity_range"] == (
-    RANDOM_JOINT_VELOCITY_RANGE
+    PLAYBACK_JOINT_VELOCITY_RANGE
   )
-  assert cfg.events["encoder_bias"].params["bias_range"] == (
-    RANDOM_ENCODER_BIAS_RANGE
-  )
-  assert cfg.events["inertial_properties"].params["alpha_range"] == (
-    RANDOM_DENSITY_LOG_SCALE_RANGE
-  )
-  assert cfg.events["joint_damping"].params["ranges"] == (
-    RANDOM_JOINT_DAMPING_SCALE_RANGE
-  )
-  assert cfg.events["joint_friction"].params["ranges"] == (
-    RANDOM_JOINT_FRICTION_SCALE_RANGE
-  )
-  assert cfg.events["joint_armature"].params["ranges"] == (
-    RANDOM_ARMATURE_SCALE_RANGE
-  )
-  assert cfg.events["pd_gains"].params["kp_range"] == (
-    RANDOM_PD_GAIN_SCALE_RANGE
-  )
-  assert cfg.events["pd_gains"].params["kd_range"] == (
-    RANDOM_PD_GAIN_SCALE_RANGE
-  )
-
-  robot = cfg.scene.entities["robot"]
-  assert robot.articulation is not None
-  for actuator in robot.articulation.actuators:
-    assert (actuator.delay_min_lag, actuator.delay_max_lag) == (
-      RANDOM_ACTION_DELAY_STEPS
+  assert not any(
+    name in cfg.events
+    for name in (
+      "encoder_bias",
+      "inertial_properties",
+      "joint_damping",
+      "joint_friction",
+      "joint_armature",
+      "pd_gains",
+      "push_robot",
     )
+  )
 
 
 def test_all_conditions_runners_use_separate_experiments() -> None:

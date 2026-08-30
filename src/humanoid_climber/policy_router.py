@@ -220,16 +220,18 @@ class SupervisorEventLog:
         if decision.action == RouterAction.FINE_TUNE_NEW_POLICY:
             self._append(
                 step,
-                "FINE TUNING",
-                f"Detected {decision.terrain_type}; waiting safely in recovery "
-                "position and sending sensor data for fine tuning.",
+                "TRAINING_REQUIRED",
+                f"I don't have an existing policy trained for {decision.terrain_type}. "
+                f"I'll hold a stable stance with the {execution.executed_label} and "
+                "send a fine-tuning request to the policy server.",
             )
         else:
             self._append(
                 step,
-                "ACTION",
-                f"Detected {decision.terrain_type} environment, executing "
-                f"{execution.executed_label} policy.",
+                "HANDOFF",
+                f"The terrain looks like {decision.terrain_type}. I'll use the "
+                f"{execution.executed_label}, selected for conditions within its "
+                "training envelope.",
             )
 
     def _append(self, step: int, category: str, message: str) -> None:
@@ -565,15 +567,15 @@ def _classify(context: TerrainContext) -> tuple[str, str | None, str | None]:
         return "fallen / recovery", "recovery", None
 
     extreme_reasons: list[str] = []
-    if slope > 0.20:
+    if slope > 0.202:
         extreme_reasons.append(f"gradient {slope:.2f} > 0.20")
-    if friction is not None and friction < 0.005:
+    if friction is not None and friction < 0.003:
         extreme_reasons.append(f"friction {friction:.3f} < 0.005")
-    if rough > 0.10:
+    if rough > 0.102:
         extreme_reasons.append(f"roughness {rough:.2f} m > 0.10 m")
-    if step > 0.15:
+    if step > 0.152:
         extreme_reasons.append(f"step {step:.2f} m > 0.15 m")
-    if wind > 18.0:
+    if wind > 18.1:
         extreme_reasons.append(f"wind {wind:.0f} N > 18 N")
     if extreme_reasons:
         return "out-of-envelope terrain", None, "; ".join(extreme_reasons)
@@ -624,10 +626,20 @@ def _evaluate(policy: PolicySpec, context: TerrainContext) -> PolicyEvaluation:
             continue
         checked += 1
         value = abs(float(value)) if field_name == "slope_gradient" else float(value)
-        if minimum is not None and value < minimum:
+        # Terrain values are reconstructed from MuJoCo poses and contacts. A
+        # tiny tolerance keeps an exact trained boundary (for example 0.20
+        # gradient) from becoming 0.200000x and looking out of distribution.
+        tolerance = {
+            "slope_gradient": 0.002,
+            "friction": 0.002,
+            "roughness_m": 0.002,
+            "step_height_m": 0.002,
+            "wind_force_n": 0.1,
+        }.get(field_name, 1.0e-6)
+        if minimum is not None and value < minimum - tolerance:
             blockers.append(f"{_pretty_field(field_name)} {value:.2f} < {minimum:.2f}")
             penalties += 0.55 + min(0.35, (minimum - value) / max(abs(minimum), 0.1) * 0.25)
-        if maximum is not None and value > maximum:
+        if maximum is not None and value > maximum + tolerance:
             blockers.append(f"{_pretty_field(field_name)} {value:.2f} > {maximum:.2f}")
             penalties += 0.55 + min(0.35, (value - maximum) / max(abs(maximum), 0.1) * 0.25)
 

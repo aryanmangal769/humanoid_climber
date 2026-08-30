@@ -162,17 +162,20 @@ The first controlled/randomized scenario pair is implemented as two separate tas
 - `HumClimber-Velocity-Controlled-Unitree-G1` is the admission benchmark. It
   uses seed `42`, flat terrain, friction `0.6`, no wind or pushes, the nominal
   robot model, a clean initial state, and a fixed `0.5 m/s` forward command.
-- `HumClimber-Velocity-Randomized-Unitree-G1` is one visible `200 × 5 m` flat
-  treadmill strip. The command remains `0.5 m/s` forward while wind, ice, and
+- `HumClimber-Velocity-Randomized-Unitree-G1` uses one continuous flat
+  substrate. The command remains `0.5 m/s` forward while wind, ice, and
   slope occur one at a time for `3–8 s`, with a neutral `2–5 s` break after
   every event.
   Spawn state, joint state, encoder bias, torso inertia/COM, joint dynamics, PD
   gains, and action latency are also sampled within bounded ranges.
 
-The randomized task deliberately has no slope grid, obstacle field, roughness
-patches, or stairs. The robot keeps walking forward on the single flat strip as the
-surrounding conditions change in time, which acts like successive treadmill
-windows without teleporting the robot between terrain tiles. Dynamic ranges are:
+The robot keeps walking forward as the surrounding conditions change in time,
+which acts like successive treadmill windows without teleporting the robot
+between terrain tiles. The recycled steering route and safety corridor remain
+available to the controller but are visually hidden. On-route and off-route
+areas share one subtle blue-gray, mineral-frost texture, so no track is exposed.
+This neutral winter ground is deliberately darker and less saturated than the
+bright white-blue palette reserved for a future snow event. Dynamic ranges are:
 
 | Condition | Randomized range |
 |---|---|

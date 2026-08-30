@@ -1,6 +1,9 @@
 """Tests for the demo policy-routing heuristic."""
 
+from types import SimpleNamespace
+
 import pytest
+import torch
 
 from humanoid_climber import cli
 from humanoid_climber.policy_router import (
@@ -12,7 +15,72 @@ from humanoid_climber.policy_router import (
     route_policy,
 )
 from humanoid_climber.safety import ImbalanceRisk
-from humanoid_climber.viewer import _imbalance_recovery_decision, render_policy_overlay
+from humanoid_climber.viewer import (
+    _imbalance_recovery_decision,
+    _motion_telemetry_html,
+    _summitos_preview_message,
+    _summitos_training_request_message,
+    render_policy_overlay,
+)
+
+
+def test_motion_profile_separates_current_environment_and_command_velocity() -> None:
+    command = SimpleNamespace(vel_command_b=torch.tensor([[0.5, -0.1, 0.2]]))
+    controller = SimpleNamespace(
+        stage=SimpleNamespace(key="incline", label="Low-friction incline"),
+        upcoming_stage=SimpleNamespace(key="wind", label="High crosswind"),
+        requested_policy_key="ice_incline",
+        policy_announcement_ready=True,
+        time_remaining_s=4.0,
+        active_surface_friction=lambda _env_idx: 0.37,
+    )
+    base = SimpleNamespace(
+        showcase_controller=controller,
+        random_event_controller=controller,
+        command_manager=SimpleNamespace(get_term=lambda _name: command),
+        treadmill_slope_gradient=torch.tensor([0.126]),
+    )
+
+    html = _motion_telemetry_html(SimpleNamespace(unwrapped=base), 0)
+
+    assert "CURRENT ENVIRONMENT" in html
+    assert "UPCOMING ENVIRONMENT" not in html
+    assert "Low-friction incline" in html
+    assert "High crosswind" not in html
+    assert "FRICTION" in html and "μ 0.37" in html
+    assert "INCLINE" in html and "+12.6%" in html
+    assert "COMMAND VELOCITY" in html
+    assert "+0.50 m/s" in html
+
+
+def test_motion_profile_shows_sampled_crosswind_with_base_friction() -> None:
+    command = SimpleNamespace(vel_command_b=torch.tensor([[0.5, 0.0, 0.0]]))
+    controller = SimpleNamespace(
+        stage=SimpleNamespace(key="wind", label="Variable crosswind"),
+        upcoming_stage=SimpleNamespace(key="rough", label="Rough terrain"),
+        requested_policy_key="wind",
+        policy_announcement_ready=True,
+        time_remaining_s=4.0,
+        active_surface_friction=lambda _env_idx: None,
+    )
+    wrench = torch.zeros((1, 2, 6))
+    wrench[0, 1, :3] = torch.tensor([-2.5, 11.75, 0.0])
+    robot = SimpleNamespace(
+        data=SimpleNamespace(body_external_wrench=wrench)
+    )
+    base = SimpleNamespace(
+        showcase_controller=controller,
+        random_event_controller=controller,
+        command_manager=SimpleNamespace(get_term=lambda _name: command),
+        scene={"robot": robot},
+    )
+
+    html = _motion_telemetry_html(SimpleNamespace(unwrapped=base), 0)
+
+    assert "Variable crosswind" in html
+    assert "X -2.5 · Y +11.8 N" in html
+    assert "Normal" in html
+    assert "Level" in html
 
 
 def test_flat_nominal_selects_stock_walker() -> None:
@@ -106,7 +174,7 @@ def test_active_safety_banner_stays_visible_above_existing_action_log() -> None:
     assert "SAFETY" in html
     assert "Protective recovery active" in html
     assert "rgba(245,185,66,.16)" in html
-    assert "Detected flat / nominal terrain environment" in html
+    assert "The terrain looks like flat / nominal terrain" in html
 
 
 def test_low_friction_incline_selects_available_ice_policy() -> None:
@@ -123,6 +191,22 @@ def test_low_friction_incline_selects_available_ice_policy() -> None:
     )
     assert decision.target_key == "ice_incline"
     assert decision.action == RouterAction.SWITCH_POLICY
+    assert decision.training_request is None
+
+
+def test_maximum_incline_allows_small_sensor_roundoff() -> None:
+    decision = route_policy(
+        TerrainContext(
+            slope_gradient=0.2005,
+            friction=0.8,
+            roughness_m=0.0,
+            step_height_m=0.0,
+            wind_force_n=0.0,
+            fallen=False,
+        )
+    )
+    assert decision.target_key == "ice_incline"
+    assert decision.action == RouterAction.USE_POLICY
     assert decision.training_request is None
 
 
@@ -281,7 +365,7 @@ def test_foundational_incline_is_assumed_available_without_checkpoint_bookkeepin
     assert execution.used_fallback is False
 
 
-def test_known_incline_logs_one_concise_action() -> None:
+def test_known_incline_logs_one_conversational_handoff() -> None:
     context = TerrainContext(
         slope_gradient=0.12,
         friction=0.15,
@@ -301,10 +385,10 @@ def test_known_incline_logs_one_concise_action() -> None:
     assert execution.used_fallback is False
     assert len(log.entries) == 1
     entry = log.entries[0]
-    assert entry.category == "ACTION"
+    assert entry.category == "HANDOFF"
     assert entry.message == (
-        "Detected low-traction incline environment, executing "
-        "Low-friction incline policy."
+        "The terrain looks like low-traction incline. I'll use the "
+        "Low-friction incline, selected for conditions within its training envelope."
     )
     html = render_policy_overlay(
         context,
@@ -313,7 +397,11 @@ def test_known_incline_logs_one_concise_action() -> None:
         log_entries=tuple(log.entries),
         current_step=1,
     )
-    assert html.count("ACTION") == 1
+    assert "ACTION" not in html
+    assert "UPCOMING" not in html
+    assert "SummitOS" in html
+    assert "font-size:15.5px" in html
+    assert ">CURRENT<" in html
     assert "EXEC" not in html
     assert "not loaded" not in html
     assert "closest executable" not in html
@@ -338,14 +426,64 @@ def test_novel_combination_logs_one_concise_fine_tuning_action() -> None:
     assert log.observe(context, decision, execution, step=2) is True
     assert len(log.entries) == 1
     entry = log.entries[0]
-    assert entry.category == "FINE TUNING"
+    assert entry.category == "TRAINING_REQUIRED"
     assert entry.message == (
-        "Detected rough terrain + wind; waiting safely in recovery position "
-        "and sending sensor data for fine tuning."
+        "I don't have an existing policy trained for rough terrain + wind. "
+        "I'll hold a stable stance with the Flat-ground walker and send a "
+        "fine-tuning request to the policy server."
     )
     assert not hasattr(log, "sensor_buffer")
     log.observe(context, decision, execution, step=5)
     assert len(log.entries) == 1
+
+
+def test_summitos_current_thought_is_larger_than_message_history() -> None:
+    context = TerrainContext(slope_gradient=0.0, friction=0.8, wind_force_n=0.0)
+    decision = route_policy(context)
+    log = SupervisorEventLog()
+    log.record_policy_lifecycle(
+        step=10, category="HANDOFF", message="Older handoff message."
+    )
+    log.record_policy_lifecycle(
+        step=20, category="THOUGHT", message="Current SummitOS thought."
+    )
+
+    html = render_policy_overlay(
+        context, decision, log_entries=tuple(log.entries), current_step=20
+    )
+
+    assert html.index("Current SummitOS thought") < html.index("Older handoff message")
+    assert html.count("font-size:15.5px") == 1
+    assert html.count("font-size:9px") == 1
+    assert "UPCOMING" not in html
+    assert "ACTION" not in html
+
+
+def test_summitos_explains_policy_training_and_unknown_condition_fallback() -> None:
+    preview = _summitos_preview_message(
+        "Low-friction incline", "ice_incline"
+    )
+    assert preview == (
+        "It seems like there is an incline with low-friction footing ahead. "
+        "Let me switch to the Low-friction incline walker."
+    )
+    assert "Low-friction incline walker" in preview
+    assert "0.20" not in preview
+    assert "0.15" not in preview
+
+    unknown = TerrainContext(
+        slope_gradient=0.28,
+        friction=0.05,
+        roughness_m=0.08,
+        wind_force_n=12.0,
+    )
+    message = _summitos_training_request_message(
+        unknown, "Normal-terrain walker"
+    )
+    assert "mu 0.05" in message
+    assert "stable stance" in message
+    assert "fine-tuning request" in message
+    assert "policy server" in message
 
 
 def test_route_state_reset_keeps_history_but_clears_stale_commit() -> None:

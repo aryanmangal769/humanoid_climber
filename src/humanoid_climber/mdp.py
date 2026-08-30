@@ -21,6 +21,7 @@ from humanoid_climber.trail import (
   trail_frame_ahead,
   trail_window_segments,
 )
+from humanoid_climber.orchestrator import ShowcaseClock
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -327,7 +328,6 @@ class apply_wind_force:
     self._asset = env.scene[cfg.params["asset_cfg"].name]
     self._body_ids = cfg.params["asset_cfg"].body_ids
     self._num_envs = env.num_envs
-    self._wind_labels = {}
 
   def __call__(
     self,
@@ -376,7 +376,7 @@ class apply_wind_force:
           continue
         start = body_pos[env_idx, body_id].detach().cpu().numpy().copy()
         start[2] += 0.65
-        end = start + force.detach().cpu().numpy() * 0.04
+        end = start + force.detach().cpu().numpy() * 0.08
         magnitude = force.norm().item()
         axis_index = int(force.abs().argmax().item())
         axis = _FORCE_AXES[axis_index].upper()
@@ -389,33 +389,7 @@ class apply_wind_force:
           width=0.025,
           label=text,
         )
-        server = getattr(visualizer, "server", None)
-        if server is not None:
-          key = (env_idx, body_id)
-          label_pos = start.copy()
-          label_pos[2] += 0.15
-          label_pos += getattr(visualizer, "_scene_offset", 0.0)
-          html = (
-            '<div style="font-weight:900;color:#000;background:rgba(255,255,255,.85);'
-            f'padding:4px 8px;border-radius:5px;white-space:nowrap">{text}</div>'
-          )
-          if key in self._wind_labels:
-            container, label = self._wind_labels[key]
-            try:
-              container.position = label_pos
-              label.content = html
-            except RuntimeError:
-              # Viser invalidates 3D GUI handles when a client/scene is rebuilt.
-              # Drop the stale pair and recreate it below on this same frame.
-              del self._wind_labels[key]
-          if key not in self._wind_labels:
-            container = server.scene.add_3d_gui_container(
-              name=f"/wind/status/{env_idx}/{body_id}",
-              position=label_pos,
-            )
-            with container:
-              label = server.gui.add_html(html)
-            self._wind_labels[key] = (container, label)
+
   def reset(self, env_ids: torch.Tensor | None = None) -> None:
     """Participate in manager lifecycle so debug visualization is discovered."""
     del env_ids
@@ -598,6 +572,31 @@ class sequential_random_events(apply_wind_force):
     # overrides on the simulation thread without reaching into EventManager
     # internals.
     env.random_event_controller = self
+
+  @property
+  def recovery_suspended(self) -> bool:
+    return self.clock.paused
+
+  def suspend_for_recovery(self) -> None:
+    """Match the recovery policy's flat, calm standalone deployment domain."""
+    if self.clock.paused:
+      return
+    self.clock.pause()
+    env_ids = torch.arange(
+      self._env.num_envs, device=self._env.device, dtype=torch.long
+    )
+    self._clear_all_event_effects(env_ids)
+    self._phase[env_ids] = self.BREAK
+
+  def resume_after_recovery(self) -> None:
+    """Restore the paused showcase condition after the robot is upright."""
+    if not self.clock.paused:
+      return
+    self.clock.resume()
+    env_ids = torch.arange(
+      self._env.num_envs, device=self._env.device, dtype=torch.long
+    )
+    self._apply_stage(env_ids)
 
   def _ids(self, env_ids: torch.Tensor | slice | None) -> torch.Tensor:
     if env_ids is None or isinstance(env_ids, slice):
@@ -895,7 +894,11 @@ class sequential_random_events(apply_wind_force):
       return
     self._hide_mocap_body(env_ids, self._ice_mocap_id)
 
-  def _activate_ice_patch(self, env_ids: torch.Tensor) -> None:
+  def _activate_ice_patch(
+    self,
+    env_ids: torch.Tensor,
+    friction_range: tuple[float, float] | None = None,
+  ) -> None:
     """Place a short low-friction strip a few metres ahead on the trail."""
     if len(env_ids) == 0:
       return
@@ -909,7 +912,9 @@ class sequential_random_events(apply_wind_force):
     quat = self._yaw_pitch_quat(tangents, zero_pitch)
     self._write_mocap_pose(env_ids, self._ice_mocap_id, local_pos, quat)
     self._set_geom_friction(
-      env_ids, self._ice_geom_ids, self._params["ice_friction_range"]
+      env_ids,
+      self._ice_geom_ids,
+      friction_range or self._params["ice_friction_range"],
     )
 
   def _hide_slope_patch(self, env_ids: torch.Tensor) -> None:
@@ -1484,3 +1489,107 @@ class sequential_random_events(apply_wind_force):
 
   def debug_vis(self, visualizer: DebugVisualizer) -> None:
     super().debug_vis(visualizer)
+
+
+@requires_model_fields("geom_friction")
+class orchestrated_policy_sequence(sequential_random_events):
+  """Run the fixed normal, incline, wind, and rough showcase on a loop."""
+
+  def __init__(self, cfg, env: ManagerBasedRlEnv):
+    super().__init__(cfg, env)
+    self.clock = ShowcaseClock(
+      stage_duration_s=float(cfg.params["stage_duration_s"]),
+      announcement_delay_s=float(cfg.params["policy_announcement_delay_s"]),
+    )
+    env.showcase_controller = self
+    # Keep the legacy telemetry hook pointed at the deterministic source while
+    # older context readers are retired.
+    env.random_event_controller = self
+
+  @property
+  def stage(self):
+    return self.clock.current
+
+  @property
+  def upcoming_stage(self):
+    return self.clock.upcoming
+
+  @property
+  def requested_policy_key(self) -> str:
+    return self.clock.requested_policy.policy_key
+
+  @property
+  def policy_announcement_ready(self) -> bool:
+    return self.clock.announcement_ready
+
+  @property
+  def time_remaining_s(self) -> float:
+    return self.clock.time_remaining_s
+
+  def active_event_names(self, env_id: int) -> tuple[str, ...]:
+    del env_id
+    if self.clock.paused:
+      return ()
+    name = self.stage.event_name
+    return (name,) if name is not None else ()
+
+  def active_surface_friction(self, env_id: int) -> float | None:
+    if self.stage.key != "incline":
+      return None
+    friction = self._env.sim.model.geom_friction
+    geom_id = int(self._ice_geom_ids[0].item())
+    value = friction[int(env_id), geom_id, 0] if friction.ndim == 3 else friction[geom_id, 0]
+    return float(value.item())
+
+  def _apply_stage(self, env_ids: torch.Tensor) -> None:
+    self._clear_all_event_effects(env_ids)
+    stage = self.stage.key
+    if stage == "normal":
+      self._phase[env_ids] = self.BREAK
+      return
+    if stage == "incline":
+      self._phase[env_ids] = self.ICE
+      self._activate_ice_patch(env_ids)
+      self._ensure_slope_state()
+      gradients = torch.empty(len(env_ids), device=self._env.device).uniform_(
+        *self._params["slope_gradient_range"]
+      )
+      # A deterministic up/down profile keeps the patch continuous while its
+      # active incline reaches the sampled gradient.
+      self._slope_profile_factors[env_ids] = torch.tensor(
+        (1.0, 1.0, -1.0, -1.0), device=self._env.device
+      )
+      centers, tangents = self._sample_patch_frames(env_ids)
+      self._slope_patch_center_xy[env_ids] = centers
+      self._slope_patch_tangent_xy[env_ids] = tangents
+      self._env.treadmill_slope_gradient[env_ids] = gradients
+      self._env.treadmill_slope_target_gradient[env_ids] = gradients
+      self._update_slope_patch_geometry(env_ids, gradients)
+      return
+    if stage == "wind":
+      self._phase[env_ids] = self.WIND
+      apply_wind_force.__call__(
+        self,
+        self._env,
+        env_ids,
+        self._params["wind_force_ranges"],
+        self._params["asset_cfg"],
+      )
+      return
+    if stage == "rough":
+      self._phase[env_ids] = self.BUMPS
+      self._activate_rough_ground(env_ids)
+      return
+    raise ValueError(f"Unknown showcase stage: {stage}")
+
+  def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    ids = self._ids(env_ids)
+    self.clock.reset()
+    self._ensure_slope_state()
+    self._apply_stage(ids)
+
+  def __call__(self, env: ManagerBasedRlEnv, env_ids: torch.Tensor | None, **kwargs) -> None:
+    del env, kwargs
+    ids = self._ids(env_ids)
+    if self.clock.advance(self._env.step_dt):
+      self._apply_stage(ids)

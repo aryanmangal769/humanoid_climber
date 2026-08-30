@@ -176,6 +176,7 @@ def test_recovery_task_uses_native_g1_tracking_interface() -> None:
   assert isinstance(motion, MotionCommandCfg)
   assert motion.motion_file == str(DEFAULT_MOTION_FILE)
   assert recovery.episode_length_s == 8.0
+  assert recovery.sim.nconmax == 70
   assert "push_robot" not in recovery.events
   assert tuple(recovery.actions) == tuple(stock.actions)
 

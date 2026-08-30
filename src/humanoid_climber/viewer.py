@@ -41,6 +41,10 @@ from humanoid_climber.safety import (
     outside_centerline,
     predict_imbalance,
 )
+from humanoid_climber.specialist_policies import (
+    RecoveryPolicyAdapter,
+    SpecialistPolicyBank,
+)
 
 
 RECOVERY_HOLD_SECONDS = 2.0
@@ -70,7 +74,7 @@ TRAIL_FOLLOW_HEADING_DEADBAND_RAD = math.radians(4.0)
 # whenever the random-event phase or loaded checkpoint changes.
 ROUTING_CONTEXT_REFRESH_SECONDS = 0.20
 MODEL_FIELD_SYNC_SECONDS = 0.20
-GROUND_STUCK_RESET_SECONDS = 10.0
+GROUND_STUCK_RESET_SECONDS = 30.0
 
 
 def _advance_ground_stuck_timer(
@@ -81,6 +85,11 @@ def _advance_ground_stuck_timer(
         return 0.0, False
     elapsed_s = max(0.0, float(elapsed_s)) + max(0.0, float(step_dt))
     return elapsed_s, elapsed_s + 1.0e-9 >= GROUND_STUCK_RESET_SECONDS
+
+
+def _recovery_should_release(*, policy_finished: bool, fallen: bool | None) -> bool:
+    """Release recovery only when its motion ended and the robot is upright."""
+    return bool(policy_finished and fallen is False)
 
 
 def _advance_safety_rearm_timer(
@@ -221,6 +230,14 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
         self._auto_random_events_checkbox = None
         self._random_event_checkboxes: dict[str, Any] = {}
         self._syncing_settings_gui = False
+        device = getattr(self.env.unwrapped, "device", "cpu")
+        self._specialist_bank = SpecialistPolicyBank(device=device)
+        self._recovery_policy = RecoveryPolicyAdapter(self.env, device=device)
+        self._active_specialist_key: str | None = None
+        self._logged_stage_key: str | None = None
+        self._training_request_signature: tuple[Any, ...] | None = None
+        self._motion_panel = None
+        self._motion_html = None
 
     @override
     def setup(self) -> None:
@@ -237,12 +254,15 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
         )
         super().setup()
         self._install_model_field_sync_gate()
-        self._setup_settings_controls()
         self._policy_panel = self._server.gui.add_panel(order=-100.0)
-        with self._policy_panel.add_tab("Policy Log"):
+        with self._policy_panel.add_tab("SummitOS Logs"):
             self._policy_html = self._server.gui.add_html(_loading_html())
         # One compact message stream, pinned to the top-left of the canvas.
-        self._policy_panel.float(x=16, y=16, width=340, height=410)
+        self._policy_panel.float(x=16, y=16, width=430, height=460)
+        self._motion_panel = self._server.gui.add_panel(order=-99.0)
+        with self._motion_panel.add_tab("Motion"):
+            self._motion_html = self._server.gui.add_html(_motion_telemetry_html(self.env, 0))
+        self._motion_panel.float(x=16, y=-16, width=350, height=275)
         self._update_policy_overlay()
 
     @override
@@ -252,17 +272,20 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
         # 60 Hz simulation does not need 60 DOM updates.  ~4 Hz keeps telemetry
         # feeling live without competing with scene rendering.
         if self._policy_overlay_tick % 15 == 0:
-            self._sync_random_event_controls()
             self._update_policy_overlay()
+            if self._motion_html is not None:
+                self._motion_html.content = _motion_telemetry_html(
+                    self.env, int(self._scene.env_idx)
+                )
 
     @override
     def close(self) -> None:
-        if self._settings_folder is not None:
-            self._settings_folder.remove()
-            self._settings_folder = None
         if self._policy_panel is not None:
             self._policy_panel.remove()
             self._policy_panel = None
+        if self._motion_panel is not None:
+            self._motion_panel.remove()
+            self._motion_panel = None
         super().close()
 
     @override
@@ -294,6 +317,9 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
         self._force_model_field_sync()
         self._policy_history_signature = None
         self._supervisor_log.reset_route_state()
+        self._recovery_policy.reset()
+        self._active_specialist_key = None
+        self._logged_stage_key = None
         super().reset_environment()
 
     def _clear_recovery_after_external_reset(self) -> None:
@@ -331,6 +357,10 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
 
     def _release_safety_recovery(self) -> None:
         """Resume locomotion without resetting after the protective hold."""
+        controller = _showcase_controller(self.env)
+        resume_showcase = getattr(controller, "resume_after_recovery", None)
+        if callable(resume_showcase):
+            resume_showcase()
         if self._recovery_command_snapshot is not None and hasattr(self, "_scene"):
             _restore_locomotion_command(
                 self.env,
@@ -350,7 +380,7 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
         self._safety_rearm_clear_time_s = 0.0
 
     def _update_ground_stuck_watchdog(self, *, env_idx: int, step_dt: float) -> bool:
-        """Reset only after ten continuous seconds spent down on the ground.
+        """Reset only after thirty continuous seconds spent down on the ground.
 
         This watchdog intentionally bypasses the dashboard's normal
         ``Reset robot after safety`` toggle. That toggle controls the short
@@ -423,6 +453,37 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
         context = self._last_context
         assert context is not None
         return context
+
+    def _submit_policy_training_request(
+        self, context: TerrainContext, decision: RoutingDecision
+    ) -> bool:
+        """Forward a novel-condition request when a policy server is attached.
+
+        The deterministic showcase does not install a server handler, so this
+        dormant fallback has no network side effects today. A future backend
+        can expose ``summitos_policy_request_handler(payload)`` on the unwrapped
+        environment without changing the control loop.
+        """
+        base = getattr(self.env, "unwrapped", self.env)
+        handler = getattr(base, "summitos_policy_request_handler", None)
+        if not callable(handler):
+            return False
+        payload = {
+            "terrain_type": decision.terrain_type,
+            "slope_gradient": context.slope_gradient,
+            "friction": context.friction,
+            "roughness_m": context.roughness_m,
+            "step_height_m": context.step_height_m,
+            "wind_force_n": context.wind_force_n,
+            "slip_ratio": context.slip_ratio,
+            "active_policy": self._active_specialist_key,
+        }
+        try:
+            handler(payload)
+        except Exception as exc:  # Future server failures must not stop control.
+            print(f"[SUMMITOS] Policy-server request failed: {exc}")
+            return False
+        return True
 
     def _install_model_field_sync_gate(self) -> None:
         """Avoid redundant GPU->CPU geom model syncs between visual changes.
@@ -764,57 +825,100 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
 
     @override
     def _execute_step(self) -> bool:
-        """Route and execute one action cycle from the same telemetry snapshot."""
+        """Execute the deterministic showcase policy, with learned fall recovery."""
         try:
-            checkpoint_name = self._ckpt_mgr.current_name if self._ckpt_mgr is not None else None
             step_dt = float(getattr(self.env.unwrapped, "step_dt", 0.02))
             env_idx = int(self._scene.env_idx)
             if self._reset_nonfinite_robot_state(env_idx=env_idx):
                 return True
-            active_events = _active_random_event_names(self.env, env_idx)
+            controller = _showcase_controller(self.env)
+            if controller is None:
+                raise RuntimeError("The deterministic showcase controller is unavailable.")
+            active_events = tuple(controller.active_event_names(env_idx))
+            policy_key = str(controller.requested_policy_key)
             context = self._routing_context_for_step(
-                checkpoint_name=checkpoint_name,
+                checkpoint_name=policy_key,
                 env_idx=env_idx,
                 step_dt=step_dt,
                 event_signature=active_events,
             )
-            # Demo assumption: the five foundational specialists are the built-in
-            # policy bank. Checkpoint bookkeeping is intentionally not surfaced in
-            # the policy log; only novel combinations require adaptation.
-            available = FOUNDATIONAL_POLICY_KEYS
-            observed_decision = route_policy(context)
-            observed_execution = resolve_policy_execution(
-                observed_decision,
-                available_policy_keys=available,
-                active_policy_key=checkpoint_name,
+            routed_decision = route_policy(
+                replace(context, active_policy=self._active_specialist_key or policy_key)
             )
-            adapted_label = self._fine_tuned_combinations.get(
-                observed_decision.terrain_type
-            )
-            if adapted_label is not None:
-                adapted_key = f"adapted:{observed_decision.terrain_type}"
+            target_stage = controller.stage
+            step_count = self.get_status().step_count
+            hold_for_training = routed_decision.action == RouterAction.FINE_TUNE_NEW_POLICY
+            if hold_for_training:
+                policy_key = self._active_specialist_key or "flat"
+                observed_decision = routed_decision
+                observed_execution = PolicyExecution(
+                    requested_key=routed_decision.target_key,
+                    executed_key=policy_key,
+                    executed_label=_specialist_label(policy_key),
+                    used_fallback=True,
+                    reason="Holding the last stable policy while a specialist is requested.",
+                )
+                request_signature = (
+                    routed_decision.terrain_type,
+                    routed_decision.target_key,
+                    context_summary(context),
+                )
+                if self._training_request_signature != request_signature:
+                    message = _summitos_training_request_message(
+                        context, observed_execution.executed_label
+                    )
+                    self._supervisor_log.record_policy_lifecycle(
+                        step=step_count,
+                        category="TRAINING_REQUIRED",
+                        message=message,
+                    )
+                    self._submit_policy_training_request(context, routed_decision)
+                    print(f"[SUMMITOS] {message}")
+                    self._training_request_signature = request_signature
+            else:
+                self._training_request_signature = None
                 observed_decision = replace(
-                    observed_decision,
-                    action=RouterAction.USE_POLICY,
-                    target_key=adapted_key,
-                    target_label=adapted_label,
-                    model="demo fine-tuned specialist",
+                    routed_decision,
+                    action=(
+                        RouterAction.SWITCH_POLICY
+                        if self._active_specialist_key not in (None, policy_key)
+                        else RouterAction.USE_POLICY
+                    ),
+                    terrain_type=target_stage.label.lower(),
+                    target_key=policy_key,
+                    target_label=_specialist_label(policy_key),
+                    model="local verified checkpoint",
                     readiness=PolicyReadiness.AVAILABLE,
-                    headline=f"Use {adapted_label}",
-                    detail="Previously fine tuned for this condition combination.",
+                    headline=f"Use {_specialist_label(policy_key)}",
+                    detail="Selected by SummitOS for the deterministic showcase.",
                     training_request=None,
                 )
                 observed_execution = PolicyExecution(
-                    requested_key=adapted_key,
-                    executed_key=adapted_key,
-                    executed_label=adapted_label,
+                    requested_key=policy_key,
+                    executed_key=policy_key,
+                    executed_label=_specialist_label(policy_key),
                     used_fallback=False,
-                    reason="Previously fine tuned for this condition combination.",
+                    reason="Loaded from the local specialist checkpoint registry.",
                 )
+                if (
+                    not self._imbalance_recovery_latched
+                    and controller.policy_announcement_ready
+                    and self._logged_stage_key != controller.stage.key
+                ):
+                    message = _summitos_preview_message(
+                        controller.stage.label, policy_key
+                    )
+                    self._supervisor_log.record_policy_lifecycle(
+                        step=step_count, category="THOUGHT", message=message
+                    )
+                    print(f"[SUMMITOS] {message}")
+                    self._logged_stage_key = controller.stage.key
+            self._active_specialist_key = policy_key
             imbalance_risk = _measure_imbalance_risk(self.env, self._scene.env_idx)
             self._imbalance_risk = imbalance_risk
             imbalance_confirmed = self._imbalance_monitor.observe(imbalance_risk)
-            adaptive_condition = _adaptive_specialist_condition(context, active_events)
+            base = getattr(self.env, "unwrapped", self.env)
+            _, physically_fallen = _posture_state(base, env_idx)
             trail_frame = _measure_trail_frame(self.env, self._scene.env_idx)
             if trail_frame is None:
                 raise RuntimeError(
@@ -822,11 +926,14 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
                     "continuing without the lateral boundary guard."
                 )
             lateral_offset_m = trail_frame.lateral_offset_m
-            centerline_breached = (
-                outside_centerline(lateral_offset_m)
-            )
+            centerline_breached = outside_centerline(lateral_offset_m)
             trigger_reason = ""
-            if self._safety_rearm_required:
+            if physically_fallen is True:
+                # Physical posture is authoritative: terrain changes and the
+                # anti-chatter rearm guard must never return a down robot to a
+                # walking specialist.
+                trigger_reason = "Robot is physically fallen."
+            elif self._safety_rearm_required:
                 # A completed recovery belongs to one incident. Do not launch
                 # another four-point sequence while the same hazard is still
                 # present or chattering around the threshold. Rearm only after
@@ -841,95 +948,42 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
                     self._safety_rearm_required = False
                     self._safety_rearm_clear_time_s = 0.0
                     self._imbalance_monitor.reset()
-            elif centerline_breached:
-                trigger_reason = (
-                    f"Left the path. Lateral offset {lateral_offset_m:+.2f} m is "
-                    f"outside the ±{CENTERLINE_MAX_OFFSET_M:.1f} m boundary."
-                )
             elif imbalance_confirmed:
                 trigger_reason = "Robot imbalance detected."
 
             if trigger_reason and not self._imbalance_recovery_latched:
                 self._imbalance_recovery_latched = True
                 self._recovery_trigger_reason = trigger_reason
+                suspend_showcase = getattr(controller, "suspend_for_recovery", None)
+                if callable(suspend_showcase):
+                    suspend_showcase()
                 self._recovery_command_snapshot = _capture_locomotion_command(
                     self.env, int(self._scene.env_idx)
                 )
-                self._recovery_steps_remaining = max(
-                    1, round(RECOVERY_HOLD_SECONDS / step_dt)
-                )
-                self._recovery_attack_steps_remaining = max(
-                    1, round(RECOVERY_ATTACK_SECONDS / step_dt)
-                )
-                if trigger_reason == "Robot imbalance detected.":
-                    message = (
-                        "Robot imbalance detected. Activating safety recovery to prevent damage."
-                    )
-                else:
-                    message = f"{trigger_reason} Activating safety recovery."
+                message = "Robot fall detected; switching to learned getting-up policy."
                 self._supervisor_log.record_safety_action(
-                    step=self.get_status().step_count,
+                    step=step_count,
                     message=message,
                 )
-                print(f"[ROUTER] {message}")
+                print(f"[SUMMITOS] {message}")
 
             if self._imbalance_recovery_latched:
-                observed_decision = _imbalance_recovery_decision(
-                    observed_decision,
-                    imbalance_risk,
-                    reason=self._recovery_trigger_reason,
-                )
+                observed_decision = _imbalance_recovery_decision(observed_decision, imbalance_risk, reason=self._recovery_trigger_reason)
                 observed_execution = PolicyExecution(
-                    requested_key="imbalance_recovery",
-                    executed_key="imbalance_recovery",
-                    executed_label="Four-point safety pose",
+                    requested_key="recovery",
+                    executed_key="recovery",
+                    executed_label="Learned getting-up policy",
                     used_fallback=False,
-                    reason="The deterministic safety controller bypasses locomotion.",
+                    reason="The safety monitor bypasses locomotion during recovery.",
                 )
-                condition_changed = False
-                decision = observed_decision
-                execution = observed_execution
-            else:
-                if adapted_label is not None:
-                    condition_changed = False
-                    decision = observed_decision
-                    execution = observed_execution
-                else:
-                    condition_changed = self._supervisor_log.observe(
-                        context,
-                        observed_decision,
-                        observed_execution,
-                        step=self.get_status().step_count,
-                    )
-                    decision = self._supervisor_log.committed_decision or observed_decision
-                    execution = self._supervisor_log.committed_execution or observed_execution
-                if (
-                    condition_changed
-                    and observed_decision.action == RouterAction.FINE_TUNE_NEW_POLICY
-                    and self._specialist_stage == "idle"
-                ):
-                    self._begin_combination_fine_tuning(
-                        observed_decision, step_dt=step_dt, env_idx=env_idx
-                    )
-                elif condition_changed:
-                    print(
-                        f"[ROUTER] Detected {decision.terrain_type} environment, "
-                        f"executing {execution.executed_label} policy."
-                    )
+            decision = observed_decision
+            execution = observed_execution
             self._last_context = context
             self._last_decision = decision
             self._last_execution = execution
             with torch.no_grad():
-                if (
-                    self._specialist_stage == "centering"
-                    and not self._imbalance_recovery_latched
-                ):
-                    self._update_specialist_centering(
-                        trail_frame=trail_frame,
-                        lateral_offset_m=lateral_offset_m,
-                        adaptive_condition=adaptive_condition,
-                        step_dt=step_dt,
-                    )
+                if hold_for_training:
+                    _stop_locomotion(self.env, int(self._scene.env_idx))
                 elif not self._imbalance_recovery_latched:
                     _apply_trail_following_command(
                         self.env,
@@ -938,12 +992,14 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
                     )
                 obs = self.env.get_observations()
                 if self._imbalance_recovery_latched:
-                    actions = self._four_point_safety_action(
-                        aggressive=self._recovery_attack_steps_remaining > 0
-                    )
+                    if not self._recovery_policy.active:
+                        self._recovery_policy.start(env_idx, obs)
+                    actions = self._specialist_bank.action(policy_key, obs)
+                    recovery_action = self._recovery_policy.action(env_idx, obs)
+                    actions[env_idx] = recovery_action[0]
                     _stop_locomotion(self.env, int(self._scene.env_idx))
                 else:
-                    actions = self.policy(obs)
+                    actions = self._specialist_bank.action(policy_key, obs)
                 step_result = self.env.step(actions)
                 if self._reset_nonfinite_robot_state(env_idx=int(self._scene.env_idx)):
                     return True
@@ -960,45 +1016,20 @@ class HumanoidClimberViserPlayViewer(ViserPlayViewer):
                     env_idx=int(self._scene.env_idx), step_dt=step_dt
                 ):
                     return True
-                if self._imbalance_recovery_latched:
-                    _stop_locomotion(self.env, int(self._scene.env_idx))
-                    if self._specialist_stage == "recovering":
-                        self._recovery_steps_remaining -= 1
-                    elif self._specialist_stage in {
-                        "fine_tuning",
-                        "waiting_checkpoint",
-                    }:
-                        self._specialist_wait_steps_remaining -= 1
-                    else:
-                        self._recovery_steps_remaining -= 1
-                    self._recovery_attack_steps_remaining = max(
-                        0, self._recovery_attack_steps_remaining - 1
-                    )
                 self._step_count += 1
                 self._stats_steps += 1
-                if self._imbalance_recovery_latched:
-                    if (
-                        self._specialist_stage == "recovering"
-                        and self._recovery_steps_remaining <= 0
+                if self._imbalance_recovery_latched and self._recovery_policy.finished:
+                    _, fallen_after_step = _posture_state(
+                        getattr(self.env, "unwrapped", self.env), env_idx
+                    )
+                    self._recovery_policy.reset()
+                    if _recovery_should_release(
+                        policy_finished=True, fallen=fallen_after_step
                     ):
-                        if self._specialist_promoted:
-                            self._try_activate_specialist(step_dt)
-                        else:
-                            self._begin_specialist_fine_tuning(step_dt)
-                    elif (
-                        self._specialist_stage
-                        in {"fine_tuning", "waiting_checkpoint"}
-                        and self._specialist_wait_steps_remaining <= 0
-                    ):
-                        self._try_activate_specialist(step_dt)
-                    elif (
-                        self._specialist_stage == "idle"
-                        and self._recovery_steps_remaining <= 0
-                    ):
-                        if self._reset_after_safety:
-                            self.reset_environment()
-                        else:
-                            self._release_safety_recovery()
+                        self._release_safety_recovery()
+                    # If still down, recovery stays latched and another learned
+                    # get-up attempt begins on the next control step. Walking
+                    # remains bypassed until upright or the 30 s watchdog reset.
             return True
         except KeyError as exc:
             if exc.args == ("critic",) and _ensure_playback_observation_groups(self.env):
@@ -1116,6 +1147,53 @@ def _find_controls_tab(gui: Any) -> Any | None:
     return None
 
 
+def _showcase_controller(env: Any) -> Any | None:
+    base = getattr(env, "unwrapped", env)
+    controller = getattr(base, "showcase_controller", None)
+    required = (
+        "stage",
+        "upcoming_stage",
+        "requested_policy_key",
+        "policy_announcement_ready",
+        "time_remaining_s",
+    )
+    return controller if controller is not None and all(hasattr(controller, name) for name in required) else None
+
+
+def _specialist_label(policy_key: str) -> str:
+    return {
+        "flat": "Normal-terrain walker",
+        "ice_incline": "Low-friction incline walker",
+        "wind": "High-wind walker",
+        "rough": "Rough-terrain walker",
+        "recovery": "Learned getting-up policy",
+    }.get(policy_key, policy_key)
+
+
+def _summitos_preview_message(stage_label: str, policy_key: str) -> str:
+    policy_label = _specialist_label(policy_key)
+    condition = {
+        "flat": "normal terrain ahead",
+        "ice_incline": "an incline with low-friction footing ahead",
+        "wind": "a variable crosswind ahead",
+        "rough": "rough terrain ahead",
+    }.get(policy_key, f"{stage_label.lower()} ahead")
+    return (
+        f"It seems like there is {condition}. Let me switch to the "
+        f"{policy_label}."
+    )
+
+
+def _summitos_training_request_message(
+    context: TerrainContext, fallback_label: str
+) -> str:
+    return (
+        f"I don't have a policy trained for {context_summary(context)}. I'll hold "
+        f"a stable stance with the {fallback_label} and send a fine-tuning request "
+        "to the policy server for these conditions."
+    )
+
+
 def _random_event_controller(env: Any) -> Any | None:
     base = getattr(env, "unwrapped", env)
     controller = getattr(base, "random_event_controller", None)
@@ -1140,6 +1218,79 @@ def _active_random_event_names(env: Any, env_idx: int) -> tuple[str, ...]:
         except (AttributeError, IndexError, RuntimeError, TypeError, ValueError):
             return ()
     return ()
+
+
+def _motion_telemetry_html(env: Any, env_idx: int) -> str:
+    """Render the current environment and commanded velocity."""
+    base = getattr(env, "unwrapped", env)
+    command = (0.0, 0.0, 0.0)
+    try:
+        term = base.command_manager.get_term("twist")
+        values = term.vel_command_b[env_idx]
+        command = tuple(float(values[index].item()) for index in range(3))
+    except (AttributeError, IndexError, KeyError, RuntimeError, TypeError):
+        pass
+
+    controller = _showcase_controller(env)
+    current = getattr(controller, "stage", None)
+    current_key = str(getattr(current, "key", "unknown"))
+    current_label = str(getattr(current, "label", "Awaiting route"))
+    wind_vector = _actual_wind_vector(base, env_idx)
+    current_wind = "Calm"
+    if current_key == "wind" and wind_vector is not None:
+        current_wind = f"X {wind_vector[0]:+.1f} · Y {wind_vector[1]:+.1f} N"
+    surface_friction = _active_event_surface_friction(base, env_idx)
+    current_friction = (
+        f"μ {surface_friction:.2f}"
+        if current_key in ("incline", "wind") and surface_friction is not None
+        else "Normal"
+    )
+    slope = _actual_treadmill_slope(base, env_idx)
+    current_incline = (
+        f"{slope * 100:+.1f}%"
+        if current_key == "incline" and slope is not None
+        else "Level"
+    )
+
+    return f"""
+            <div style="font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;
+                    background:radial-gradient(circle at 8% 0%,rgba(144,224,255,.22),transparent 34%),linear-gradient(155deg,#1d4a68,#163750 54%,#183f56);
+                    border:1px solid rgba(173,224,248,.28);border-radius:20px;padding:14px;color:#dff5ff;
+                    box-shadow:0 20px 56px rgba(2,12,24,.38),0 1px 0 rgba(255,255,255,.12) inset;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                    <div><div style="font-size:12px;font-weight:820;color:#f4fbff;">Motion Profile</div>
+                    <div style="font:650 7px ui-monospace,monospace;color:#8fc3da;letter-spacing:.1em;margin-top:2px;">LIVE GUIDANCE</div></div>
+                    <span style="width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:10px 10px 4px 10px;
+                            background:linear-gradient(145deg,#bff3ff,#69c7ee);color:#123650;font-size:14px;font-weight:900;">↗</span>
+                </div>
+                <div style="padding:12px;background:rgba(224,247,255,.10);border:1px solid rgba(190,232,248,.19);border-radius:14px;">
+                    <div style="font:750 7px ui-monospace,monospace;color:#9bd3e9;letter-spacing:.1em;">CURRENT ENVIRONMENT</div>
+                    <div style="font-size:13px;font-weight:780;color:#f1fbff;margin-top:4px;">{_esc(current_label)}</div>
+                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px;">
+                        {_motion_metric("WIND", current_wind, "#79ddf4")}
+                        {_motion_metric("FRICTION", current_friction, "#a9f5d8")}
+                        {_motion_metric("INCLINE", current_incline, "#ffd28a")}
+                    </div>
+                </div>
+                <div style="padding:12px;margin-top:9px;background:rgba(8,29,45,.27);border:1px solid rgba(151,208,233,.14);border-radius:14px;">
+                    <div style="font:750 7px ui-monospace,monospace;color:#9bd3e9;letter-spacing:.1em;">COMMAND VELOCITY</div>
+                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:9px;">
+                        {_motion_metric("FORWARD", f"{command[0]:+.2f} m/s", "#8bc8ff")}
+                        {_motion_metric("LATERAL", f"{command[1]:+.2f} m/s", "#8bc8ff")}
+                        {_motion_metric("YAW", f"{command[2]:+.2f} rad/s", "#8bc8ff")}
+                    </div>
+                </div>
+            </div>
+    """
+
+
+def _motion_metric(label: str, value: str, color: str) -> str:
+    return (
+    '<div style="min-width:0;padding:7px;background:rgba(5,25,40,.28);border-radius:9px;">'
+    f'<div style="font:750 6.5px ui-monospace,monospace;color:{color};letter-spacing:.07em;">{_esc(label)}</div>'
+    f'<div style="font-size:10px;font-weight:760;margin-top:3px;color:#f0f9fd;white-space:nowrap;">{_esc(value)}</div>'
+        '</div>'
+    )
 
 
 def _adaptive_specialist_condition(
@@ -1438,7 +1589,7 @@ def render_policy_overlay(
         current_step: int | None = None,
 ) -> str:
     """Render the concise committed policy-action stream."""
-    del context, history, imbalance_risk
+    del history, imbalance_risk
     execution = execution or resolve_policy_execution(
         decision, available_policy_keys=FOUNDATIONAL_POLICY_KEYS
     )
@@ -1470,6 +1621,9 @@ def render_policy_overlay(
         entry_step = getattr(entry, "step", None)
         color = {
             "ACTION": "#35d07f",
+            "UPCOMING": "#70b7ff",
+            "THOUGHT": "#70b7ff",
+            "HANDOFF": "#57dda1",
             "FINE TUNING": "#ff6b7a",
             "POLICY ADDED": "#35d07f",
             "CHECKPOINT MISSING": "#f5b942",
@@ -1482,50 +1636,107 @@ def render_policy_overlay(
                 message,
                 f"step {entry_step}" if entry_step is not None else "log",
                 color,
+                prominent=not messages,
             )
         )
 
     if not messages and not recovery_active:
         if decision.action == RouterAction.FINE_TUNE_NEW_POLICY:
-            label = "FINE TUNING"
-            text = (
-                f"Detected {decision.terrain_type}; waiting safely in recovery position "
-                "and sending sensor data for fine tuning."
+            label = "TRAINING_REQUIRED"
+            text = _summitos_training_request_message(
+                context, execution.executed_label
             )
         else:
-            label = "ACTION"
-            text = f"Detected {decision.terrain_type} environment, executing {execution.executed_label} policy."
+            label = "HANDOFF"
+            text = (
+                f"The terrain looks like {decision.terrain_type}. I'll keep the "
+                f"{execution.executed_label} in control."
+            )
         messages.append(
             _log_message(
                 label,
                 text,
                 f"step {current_step}" if isinstance(current_step, int) else "live",
-                "#f5b942" if label == "SAFETY" else "#ff6b7a" if label == "FINE TUNING" else "#35d07f",
+                "#ff6b7a" if label == "TRAINING_REQUIRED" else "#57dda1",
+                prominent=True,
             )
         )
 
     return (
         '<div style="font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;'
-        'background:#0d1015;border:1px solid #252b35;border-radius:9px;padding:8px;">'
+        'background:radial-gradient(circle at 10% 0%,rgba(144,224,255,.24),transparent 34%),'
+        'linear-gradient(155deg,rgba(28,61,88,.97),rgba(17,39,62,.97) 48%,rgba(22,48,69,.97));'
+        'border:1px solid rgba(173,224,248,.28);border-radius:22px;padding:14px;'
+        'box-shadow:0 24px 70px rgba(2,12,24,.42),0 1px 0 rgba(255,255,255,.14) inset;'
+        'backdrop-filter:blur(18px);">'
+        '<div style="display:flex;align-items:center;justify-content:space-between;'
+        'padding:1px 3px 14px;">'
+        '<div style="display:flex;align-items:center;gap:9px;">'
+        '<span style="width:29px;height:29px;display:inline-flex;align-items:center;justify-content:center;'
+        'border-radius:10px 10px 10px 4px;background:linear-gradient(145deg,#bff3ff,#69c7ee);'
+        'box-shadow:0 7px 18px rgba(71,180,226,.3);color:#123650;font-size:13px;font-weight:900;">▲</span>'
+        '<div><div style="font-size:12px;font-weight:820;color:#f4fbff;letter-spacing:.015em;">SummitOS</div>'
+        '<div style="font:650 7px ui-monospace,SFMono-Regular,monospace;color:#8fc3da;'
+        'letter-spacing:.11em;margin-top:2px;">AUTONOMY JOURNAL</div></div></div>'
+        '<div style="display:flex;align-items:center;gap:5px;padding:3px 7px;'
+        'background:rgba(139,241,200,.12);border:1px solid rgba(139,241,200,.3);border-radius:99px;">'
+        '<span style="width:5px;height:5px;border-radius:50%;background:#8bf1c8;'
+        'box-shadow:0 0 9px rgba(139,241,200,.85);"></span>'
+        '<span style="font:750 7px ui-monospace,SFMono-Regular,monospace;color:#a9f5d8;letter-spacing:.09em;">LIVE</span>'
+        '</div></div>'
         + safety_banner
-        + '<div style="max-height:335px;overflow-y:auto;padding-right:3px;">'
+        + '<div style="max-height:360px;overflow-y:auto;padding:1px 4px 2px 0;">'
         + "".join(messages)
         + "</div></div>"
     )
 
 
-def _log_message(label: str, text: str, meta: str, color: str) -> str:
-    """One compact chat-style log message."""
+def _log_message(
+    label: str, text: str, meta: str, color: str, *, prominent: bool = False
+) -> str:
+    """Render the current SummitOS thought prominently and its history quietly."""
+    del label
+    if prominent:
+        return (
+            '<div style="position:relative;padding:18px 18px 19px;margin:1px 2px 18px 8px;'
+            'background:linear-gradient(145deg,rgba(244,252,255,.98),rgba(214,240,250,.96));'
+            f'border:1px solid {color}70;border-radius:19px 19px 19px 6px;'
+            'box-shadow:0 14px 34px rgba(2,18,32,.28),0 1px 0 rgba(255,255,255,.8) inset;">'
+            f'<div style="position:absolute;left:-6px;bottom:0;width:13px;height:13px;background:#d8f1fa;'
+            'clip-path:polygon(100% 0,100% 100%,0 100%);"></div>'
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">'
+            '<div style="display:flex;align-items:center;gap:8px;">'
+            f'<span style="width:27px;height:27px;display:inline-flex;align-items:center;justify-content:center;'
+            f'border-radius:9px 9px 9px 3px;background:{color};box-shadow:0 7px 15px {color}35;'
+            'font:900 11px ui-monospace,SFMono-Regular,monospace;color:#082438;">S</span>'
+            '<div><div style="font-size:11.5px;font-weight:820;color:#17364d;letter-spacing:.01em;">SummitOS</div>'
+            '<div style="font:650 7px ui-monospace,SFMono-Regular,monospace;color:#63849a;'
+            'letter-spacing:.07em;margin-top:1px;">TERRAIN INTELLIGENCE</div></div>'
+            '</div>'
+            '<div style="display:flex;align-items:center;gap:7px;">'
+            f'<span style="padding:3px 7px;border-radius:99px;background:{color}1f;'
+            f'border:1px solid {color}66;font:800 7px ui-monospace,SFMono-Regular,monospace;'
+            f'color:#24536b;letter-spacing:.08em;">CURRENT</span>'
+            f'<span style="font:650 8px ui-monospace,SFMono-Regular,monospace;color:#7892a3;">{_esc(meta)}</span>'
+            '</div>'
+            '</div>'
+            '<div style="font-size:15.5px;line-height:1.5;color:#15344b;margin-top:14px;'
+            'font-weight:650;letter-spacing:-.015em;">'
+            + _esc(text) + '</div>'
+            '</div>'
+        )
     return (
-        '<div style="padding:8px 9px;margin-bottom:6px;background:#12161c;'
-        'border:1px solid #202630;border-left:2px solid ' + color + ';border-radius:7px;">'
-        '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">'
-        f'<span style="font:700 8px ui-monospace,SFMono-Regular,monospace;color:{color};'
-        f'letter-spacing:.07em;">{_esc(label)}</span>'
-        f'<span style="font:500 8px ui-monospace,SFMono-Regular,monospace;color:#515b68;">{_esc(meta)}</span>'
-        "</div>"
-        f'<div style="font-size:10.5px;line-height:1.45;color:#c3cad4;margin-top:4px;">{_esc(text)}</div>'
-        "</div>"
+        '<div style="position:relative;padding:8px 8px 9px 14px;margin:0 4px 2px 13px;'
+        'border-bottom:1px solid rgba(166,211,231,.12);opacity:.62;">'
+        '<div style="position:absolute;left:-8px;top:-4px;bottom:-4px;width:1px;'
+        'background:rgba(142,198,222,.22);"></div>'
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'
+        f'<span style="position:absolute;left:-11px;width:5px;height:5px;border-radius:50%;'
+        f'background:{color};box-shadow:0 0 6px {color}66;"></span>'
+        f'<span style="font:550 7.5px ui-monospace,SFMono-Regular,monospace;color:#85a8b9;">{_esc(meta)}</span>'
+        '</div>'
+        f'<div style="font-size:9px;line-height:1.42;color:#bad0dc;margin-top:4px;">{_esc(text)}</div>'
+        '</div>'
     )
 
 
@@ -1721,13 +1932,23 @@ def _fixed_terrain_slope(base: Any) -> float | None:
 
 
 def _actual_wind_force(base: Any, env_idx: int) -> float | None:
+    vector = _actual_wind_vector(base, env_idx)
+    if vector is None:
+        return None
+    return sum(component * component for component in vector) ** 0.5
+
+
+def _actual_wind_vector(
+    base: Any, env_idx: int
+) -> tuple[float, float, float] | None:
     scene = getattr(base, "scene", None)
     if scene is None:
         return None
     try:
         robot = scene["robot"]
         wrench = robot.data.body_external_wrench[env_idx, :, :3]
-        return float(wrench.square().sum(dim=-1).sqrt().max().item())
+        force = wrench[wrench.square().sum(dim=-1).argmax()]
+        return tuple(float(force[index].item()) for index in range(3))
     except (AttributeError, KeyError, IndexError, TypeError, RuntimeError):
         return None
 
@@ -1872,8 +2093,12 @@ def _esc(value: Any) -> str:
 
 def _loading_html() -> str:
     return (
-        '<div style="font-family:ui-monospace,monospace;padding:12px;color:#94a3b8;">'
-        "Connecting terrain telemetry…</div>"
+        '<div style="font-family:Inter,-apple-system,sans-serif;padding:18px;'
+        'background:linear-gradient(145deg,#214b68,#15334f);border:1px solid rgba(173,224,248,.28);'
+        'border-radius:18px;color:#c8e9f7;box-shadow:0 18px 44px rgba(2,12,24,.35);">'
+        '<div style="font-size:12px;font-weight:800;color:#f2fbff;">SummitOS</div>'
+        '<div style="font:650 8px ui-monospace,monospace;letter-spacing:.08em;margin-top:7px;">'
+        "CONNECTING TERRAIN INTELLIGENCE…</div></div>"
     )
 
 

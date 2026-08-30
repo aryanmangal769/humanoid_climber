@@ -24,6 +24,9 @@ DEFAULT_MOTION_FILE = (
 def unitree_g1_recovery_env_cfg(*, play: bool = False) -> ManagerBasedRlEnvCfg:
   """Build a 29-action G1 task that tracks a supine-to-standing reference."""
   cfg = unitree_g1_flat_tracking_env_cfg(play=play)
+  # Supine recovery creates more simultaneous ground and self contacts than the
+  # stock tracking motion. Keep enough capacity to avoid dropping contacts.
+  cfg.sim.nconmax = 70
   motion_cmd = cfg.commands["motion"]
   assert isinstance(motion_cmd, MotionCommandCfg)
   motion_cmd.motion_file = os.environ.get(
