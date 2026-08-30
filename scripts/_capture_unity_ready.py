@@ -8,20 +8,23 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
+from urllib.request import urlopen
+from urllib.parse import urlparse
 
-import requests
 import websockets
 
 ROOT = Path(__file__).resolve().parents[1]
-SCREENSHOT = ROOT / ".everest-browser-ready.png"
-PROFILE = ROOT / ".everest-chrome-profile"
-PORT = 9223
+SCREENSHOT = Path(os.environ.get("EVEREST_CAPTURE_SCREENSHOT", ROOT / ".everest-browser-ready.png"))
+PROFILE = Path(os.environ.get("EVEREST_CAPTURE_PROFILE", ROOT / ".everest-chrome-profile"))
+PORT = int(os.environ.get("EVEREST_CAPTURE_DEBUG_PORT", "9223"))
 URL = os.environ.get(
     "EVEREST_BROWSER_URL",
     "http://127.0.0.1:18888/?build=20260830-0231",
 )
 BACKEND_URL = os.environ.get("EVEREST_CAPTURE_BACKEND")
 CAPTURE_WEATHER = os.environ.get("EVEREST_CAPTURE_WEATHER", "").strip().lower()
+CLICK_X = os.environ.get("EVEREST_CAPTURE_CLICK_X")
+CLICK_Y = os.environ.get("EVEREST_CAPTURE_CLICK_Y")
 
 
 def launch() -> subprocess.Popen[str]:
@@ -44,12 +47,15 @@ def launch() -> subprocess.Popen[str]:
 
 
 def page_ws_url(timeout: float = 20.0) -> str:
+    expected_port = urlparse(URL).port
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            pages = requests.get(f"http://127.0.0.1:{PORT}/json", timeout=1).json()
+            with urlopen(f"http://127.0.0.1:{PORT}/json", timeout=1) as response:
+                pages = json.load(response)
             for page in pages:
-                if page.get("type") == "page" and "18888" in page.get("url", ""):
+                page_port = urlparse(page.get("url", "")).port
+                if page.get("type") == "page" and page_port == expected_port:
                     return page["webSocketDebuggerUrl"]
         except Exception:
             pass
@@ -93,6 +99,12 @@ async def capture(ws_url: str) -> None:
             await asyncio.sleep(1.0)
         if not ready:
             raise RuntimeError("Unity loading overlay never completed")
+
+        if CLICK_X is not None and CLICK_Y is not None:
+            point = {"x": float(CLICK_X), "y": float(CLICK_Y), "button": "left", "clickCount": 1}
+            await call("Input.dispatchMouseEvent", {"type": "mousePressed", **point})
+            await call("Input.dispatchMouseEvent", {"type": "mouseReleased", **point})
+            await asyncio.sleep(1.0)
 
         if BACKEND_URL:
             async with websockets.connect(

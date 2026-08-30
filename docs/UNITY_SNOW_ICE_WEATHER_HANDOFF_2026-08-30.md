@@ -1,7 +1,7 @@
 # Everest Unity Snow/Ice/Weather Pass — Handoff
 
 Date: 2026-08-30
-Branch: `everest-dream-integration`
+Branch: `everest-policy-retrain-demo`
 Project: `/home/auverus/git/everest-hack`
 
 ## Goal
@@ -567,3 +567,54 @@ the full layer.
 
 The HUD reports this startup state as `SIM HOLD` so an operator can distinguish
 intentional stationary settlement inspection from an active locomotion run.
+
+## 2026-08-30 policy/retraining demo workflow
+
+The right dock now has two tabs: `ENV SETUP` retains the environment, weather,
+physics-window, material, terrain, robot, camera, and system controls; `DEMO`
+contains the policy supervisor and retraining workflow.
+
+Failure detection is intentionally truthful and deterministic. It ports the
+IMU/contact thresholds and three-frame confirmation from
+`/home/auverus/git/humanoid_climber/src/humanoid_climber/safety.py` and is
+reported as `deterministic_imu_contact`; there is no learned detector artifact
+in that checkout. The route classes are flat, low-friction incline, wind,
+rough terrain, recovery, and a combined/new-specialist request. The decision
+log is emitted by the same supervisor state that gates the MuJoCo policy step.
+
+When failure is confirmed (or `INJECT DEMO FAILURE` is pressed), the backend:
+
+1. zeros command/manual/cheat inputs and enables a stand lock,
+2. pauses the main simulation in a safe hold,
+3. writes `runs/retrain_requests/<request-id>/manifest.json`, and
+4. exposes a raw 320x240 native MuJoCo offscreen view of the captured
+   Newton-window subset at 1 Hz.
+
+The manifest schema is `everest-rl-subset/v1`. A live Newton capture includes
+the moving-window vertices, per-layer vertices, MPM solver metadata, weather,
+material context, robot `qpos`/`qvel`, command, feet/contact telemetry, and the
+detector output. The training status is explicitly
+`requested_not_launched` because this repository has no trainer endpoint.
+
+The local policy registry currently contains one real compatible
+98-observation/29-action ONNX checkpoint (`flat`). `ice_incline`, `wind`, and
+`rough` can be returned for demos by reusing that checkpoint, but the UI marks
+each as `demo_pretrained · flat checkpoint surrogate`. `recovery` remains
+incompatible/unavailable because its observation/setup contract differs. A
+real returned checkpoint is accepted only after the runtime validates the
+compatible ONNX schema and actuator layout. Selecting LIVE remains read-only.
+
+Acceptance commands for this branch:
+
+```text
+PYTHONPATH=. .venv-sim/bin/python tests/test_policy_supervisor.py
+LD_LIBRARY_PATH=/usr/lib/wsl/lib PYTHONPATH=. .venv-sim/bin/python scripts/verify_policy_retrain_demo.py
+EVEREST_SIM_CONTROL_TEST_PORT=18767 LD_LIBRARY_PATH=/usr/lib/wsl/lib PYTHONPATH=. .venv-sim/bin/python scripts/verify_unity_sim_controls.py
+EVEREST_UNITY_WEB_PROJECT=/mnt/c/Users/auverus/Documents/EverestUnityWeb2 bash scripts/build-unity-webgl.sh
+```
+
+The WebGL build was smoke-tested with headless Chromium against a disposable
+backend: the DEMO tab rendered, the robot/terrain loaded, and no runtime,
+shader, or WebAssembly exception events were observed. Production backend
+`18765` and served WebGL assets should only be restarted/replaced after the
+branch is committed and pushed.

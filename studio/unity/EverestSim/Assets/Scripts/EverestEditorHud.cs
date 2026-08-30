@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
@@ -81,6 +82,7 @@ namespace EverestSim
         private Texture2D _splitterTex;
 
         private Vector2 _scroll;
+        private Vector2 _demoScroll;
         private bool _draftInitialized;
         private string _surface = "snow";
         private string _dataMode = "sim";
@@ -118,6 +120,10 @@ namespace EverestSim
         private int _localLod = 1;
         private int _macroLod = 7;
         private int _selectedLayer;
+        private int _dockTab;
+        private Texture2D _subsetTexture;
+        private string _subsetCaption = "Subset preview disabled";
+        private string _checkpointReturnPath = "";
         private readonly List<LayerDraft> _layers = new List<LayerDraft>();
 
         private static readonly string[] LayerTypes = { "POWDER", "WIND_PACK", "CRUST", "DENSE_SNOW", "FIRN", "ICE" };
@@ -189,6 +195,24 @@ namespace EverestSim
             _camera = camera;
             _runtime = runtime;
             ResetDraftLayers();
+            _backend.SubsetViewReceived += OnSubsetView;
+        }
+
+        private void OnSubsetView(JObject data)
+        {
+            var encoded = data.Value<string>("image");
+            if (string.IsNullOrWhiteSpace(encoded)) return;
+            try
+            {
+                var bytes = Convert.FromBase64String(encoded);
+                if (_subsetTexture == null) _subsetTexture = new Texture2D(2, 2, TextureFormat.RGB24, false);
+                ImageConversion.LoadImage(_subsetTexture, bytes, false);
+                _subsetCaption = data.Value<string>("caption") ?? "Raw MuJoCo subset";
+            }
+            catch (Exception exc)
+            {
+                _subsetCaption = $"Subset preview decode failed: {exc.Message}";
+            }
         }
 
         private void EnsureStyles()
@@ -438,17 +462,123 @@ namespace EverestSim
             GUILayout.Label("SIMULATION CONTROLS", _sectionTitle);
             GUILayout.Label("Backend-authoritative snow, ice, rock and atmosphere", _tiny);
             GUILayout.Space(5f);
-            _scroll = GUILayout.BeginScrollView(_scroll, false, true);
-
-            DrawEnvironmentSection();
-            DrawPhysicsWindowSection();
-            DrawMaterialSection();
-            DrawTerrainSection();
-            DrawControlSection();
-            DrawSystemSection();
-
-            GUILayout.EndScrollView();
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("ENV SETUP", _dockTab == 0 ? _buttonActive : _button)) _dockTab = 0;
+            if (GUILayout.Button("DEMO", _dockTab == 1 ? _buttonActive : _button)) _dockTab = 1;
+            GUILayout.EndHorizontal();
+            if (_dockTab == 0)
+            {
+                _scroll = GUILayout.BeginScrollView(_scroll, false, true);
+                DrawEnvironmentSection();
+                DrawPhysicsWindowSection();
+                DrawMaterialSection();
+                DrawTerrainSection();
+                DrawControlSection();
+                DrawSystemSection();
+                GUILayout.EndScrollView();
+            }
+            else
+            {
+                _demoScroll = GUILayout.BeginScrollView(_demoScroll, false, true);
+                DrawDemoSection();
+                GUILayout.EndScrollView();
+            }
             GUILayout.EndArea();
+        }
+
+        private void DrawDemoSection()
+        {
+            BeginSection("POLICY SUPERVISOR");
+            var state = _backend.LatestState;
+            var policy = state?["policy"] as JObject;
+            var supervisor = policy?["supervisor"] as JObject;
+            var stage = supervisor?.Value<string>("stage") ?? "monitoring";
+            var activeKey = supervisor?.Value<string>("active_policy_key") ?? "flat";
+            var selectedKey = policy?.Value<string>("selected_policy_key") ?? activeKey;
+            var activeLabel = supervisor?.Value<string>("active_policy_label") ?? "Flat-ground walker";
+            var executionSuffix = supervisor?.Value<bool?>("demo_pretrained") == true ? " (flat surrogate)" : "";
+            GUILayout.Label($"SELECTED  {selectedKey}  ·  EXECUTING  {activeLabel}{executionSuffix}", _label);
+            GUILayout.Label($"stage: {stage} · checkpoint: {supervisor?.Value<string>("executed_checkpoint") ?? "none"}", _tiny);
+            if (stage == "waiting_checkpoint")
+            {
+                GUILayout.Label("SAFE HOLD · simulation paused while a compatible checkpoint is returned.", _warn);
+                GUILayout.Label($"request {supervisor?.Value<string>("request_id") ?? "pending"}", _tiny);
+            }
+            GUILayout.Space(4f);
+            GUILayout.Label("LOADED / DEMO POLICY", _sectionTitle);
+            var registry = policy?["registry"] as JArray;
+            if (registry != null)
+            {
+                foreach (var token in registry)
+                {
+                    var item = token as JObject;
+                    if (item == null) continue;
+                    var key = item.Value<string>("key") ?? "";
+                    var label = item.Value<string>("label") ?? key;
+                    var status = item.Value<string>("status") ?? "unknown";
+                    var selected = key == selectedKey;
+                    var available = status == "available" || status == "selector" || status == "demo_pretrained";
+                    var old = GUI.enabled;
+                    GUI.enabled = old && available && key != "recovery";
+                    if (GUILayout.Button(selected ? $"● {label}" : label, selected ? _buttonActive : _button))
+                        _backend.SendPolicySelect(key);
+                    GUI.enabled = old;
+                    GUILayout.Label($"{status}{(item.Value<bool?>("surrogate") == true ? " · flat checkpoint surrogate" : "")}", status == "available" ? _good : _muted);
+                }
+            }
+            var currentRoute = supervisor?["route"] as JObject;
+            var requestedKey = currentRoute?.Value<string>("requested_key") ?? "ice_incline";
+            if (GUILayout.Button("RETURN DEMO-PRETRAINED CHECKPOINT", _buttonActive))
+                _backend.SendDemoPretrained(requestedKey);
+            GUILayout.Label("REAL COMPATIBLE ONNX RETURN", _sectionTitle);
+            _checkpointReturnPath = GUILayout.TextField(_checkpointReturnPath ?? "");
+            if (GUILayout.Button("LOAD RETURNED CHECKPOINT", _button) && !string.IsNullOrWhiteSpace(_checkpointReturnPath))
+                _backend.SendCheckpointReturn(requestedKey, _checkpointReturnPath.Trim());
+            GUILayout.Label("Specialist rows are explicit demo-pretrained returns until a compatible ONNX checkpoint is supplied. The simulator never claims a missing model executed.", _muted);
+            EndSection();
+
+            BeginSection("FAILURE / RETRAIN WORKFLOW");
+            var detector = supervisor?["detector"] as JObject;
+            var risk = detector?["risk"] as JObject;
+            GUILayout.Label(
+                $"detector  {detector?.Value<string>("kind") ?? "deterministic_imu_contact"} · " +
+                $"tilt {risk?.Value<float?>("tilt_degrees") ?? 0f:0.0}° · " +
+                $"rate {risk?.Value<float?>("tipping_rate_rad_s") ?? 0f:0.00} rad/s · " +
+                $"feet {risk?.Value<int?>("feet_in_contact") ?? 0}", _tiny);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("INJECT DEMO FAILURE", _buttonDanger)) _backend.SendDemoFailure();
+            if (GUILayout.Button("REQUEST RETRAIN", _button)) _backend.SendRetrainRequest();
+            GUILayout.EndHorizontal();
+            var route = supervisor?["route"] as JObject;
+            GUILayout.Label($"route  {route?.Value<string>("terrain_type") ?? "terrain pending"} → {route?.Value<string>("requested_label") ?? "selector"}", _label);
+            GUILayout.Label("Failure detection mirrors humanoid_climber/safety.py: deterministic tilt/contact thresholds with three-frame confirmation. Retraining captures the current Newton-window subset and waits; no trainer is launched without an endpoint.", _muted);
+            EndSection();
+
+            BeginSection("DECISION LOG");
+            var entries = supervisor?["decision_log"] as JArray;
+            if (entries == null || entries.Count == 0) GUILayout.Label("No routing events yet.", _muted);
+            else foreach (var token in entries)
+            {
+                var entry = token as JObject;
+                if (entry == null) continue;
+                GUILayout.Label($"[{entry.Value<string>("category")}] {entry.Value<string>("message")}", entry.Value<string>("category") == "FAILURE DETECTED" ? _warn : _label);
+            }
+            EndSection();
+
+            BeginSection("NEWTON SUBSET ENVIRONMENT");
+            var enabled = policy?.Value<bool?>("subset_preview_enabled") == true;
+            if (GUILayout.Button(enabled ? "HIDE RAW MUJOCO SUBSET" : "SHOW RAW MUJOCO SUBSET", enabled ? _buttonActive : _button))
+                _backend.SendSubsetPreview(!enabled);
+            GUILayout.Label(_subsetCaption, _tiny);
+            if (_subsetTexture != null && enabled)
+                GUILayout.Label(_subsetTexture, GUI.skin.label, GUILayout.Width(Mathf.Min(rectWidth(), 320f)), GUILayout.Height(Mathf.Min(rectWidth() * 0.75f, 240f)));
+            GUILayout.Label("This is the native MuJoCo offscreen view of the active Newton-window RL environment. It is intentionally diagnostic rather than styled.", _muted);
+            EndSection();
+        }
+
+        private float rectWidth()
+        {
+            return Mathf.Max(120f, _currentDockWidth - 32f);
         }
 
         private void DrawEnvironmentSection()
@@ -1088,6 +1218,8 @@ namespace EverestSim
 
         private void OnDestroy()
         {
+            if (_backend != null) _backend.SubsetViewReceived -= OnSubsetView;
+            Destroy(_subsetTexture);
             Destroy(_chromeTex); Destroy(_dockTex); Destroy(_sectionTex); Destroy(_buttonTex);
             Destroy(_buttonHoverTex); Destroy(_accentTex); Destroy(_dangerTex); Destroy(_metricTex);
             Destroy(_splitterTex);

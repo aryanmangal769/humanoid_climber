@@ -32,7 +32,7 @@ async def recv_until(ws, wanted: str, timeout: float = 10.0):
     raise TimeoutError(wanted)
 
 
-async def control(ws, action, value, *, expected_ok=True):
+async def control(ws, action, value=None, *, expected_ok=True):
     await ws.send(json.dumps({"type": "control", "action": action, "value": value}))
     ack = await recv_until(ws, "control_ack")
     assert bool(ack.get("ok")) is expected_ok, ack
@@ -112,6 +112,57 @@ async def main() -> None:
                 state = await recv_until(ws, "state")
                 if state.get("surface") == "snow" and state.get("newton", {}).get("active"):
                     break
+
+            # Exercise the operator-facing failure -> safe hold -> checkpoint
+            # lifecycle over the same WebSocket Unity uses.  The bridge starts
+            # with DEFAULT_SNOW, so the captured subset must be a live Newton
+            # multilayer window rather than the rigid fallback.
+            await control(ws, "demo_failure")
+            waiting = None
+            subset = None
+            deadline = time.monotonic() + 12.0
+            while time.monotonic() < deadline and (waiting is None or subset is None):
+                message = json.loads(await asyncio.wait_for(ws.recv(), timeout=3.0))
+                if message.get("type") == "state":
+                    candidate = message["data"]
+                    supervisor = candidate.get("policy", {}).get("supervisor", {})
+                    if supervisor.get("stage") == "waiting_checkpoint":
+                        waiting = candidate
+                elif message.get("type") == "subset_view":
+                    subset = message["data"]
+            assert waiting is not None, "demo failure did not enter safe wait"
+            assert waiting.get("paused") is True
+            assert waiting["policy"]["selected_policy_key"] == "auto"
+            supervisor = waiting["policy"]["supervisor"]
+            manifest_path = Path(supervisor["request_manifest"])
+            manifest = json.loads(manifest_path.read_text())
+            terrain = manifest["environment"]["terrain"]
+            assert terrain.get("mode") == "live", terrain
+            assert terrain.get("vertices"), terrain
+            assert terrain.get("layer_vertices"), terrain
+            assert terrain.get("mpm", {}).get("solver"), terrain
+            assert subset and subset.get("encoding") == "jpeg/base64"
+
+            bad_return = await control(ws, "checkpoint_return", {
+                "key": "ice_incline",
+                "label": "Invalid smoke-test checkpoint",
+                "path": "/tmp/everest-missing-policy.onnx",
+            }, expected_ok=False)
+            assert "checkpoint" in bad_return.get("message", "").lower() or "onnx" in bad_return.get("message", "").lower(), bad_return
+
+            await control(ws, "demo_return_pretrained", "ice_incline")
+            active = None
+            deadline = time.monotonic() + 6.0
+            while time.monotonic() < deadline:
+                candidate = await recv_until(ws, "state", timeout=3.0)
+                supervisor = candidate.get("policy", {}).get("supervisor", {})
+                if supervisor.get("stage") == "policy_active":
+                    active = candidate
+                    break
+            assert active is not None, "demo checkpoint did not activate"
+            assert active["policy"]["selected_policy_key"] == "ice_incline"
+            assert active["policy"]["supervisor"]["active_policy_key"] == "ice_incline"
+            assert active["policy"]["supervisor"]["demo_pretrained"] is True
 
             await control(ws, "weather", {
                 "temperature_c": -24.0,

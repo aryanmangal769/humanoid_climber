@@ -55,6 +55,7 @@ namespace EverestSim
         public JObject LatestFault { get; private set; }
         public JObject LatestControlAck { get; private set; }
         public JObject LatestSensors { get; private set; }
+        public JObject LatestSubsetView { get; private set; }
 
         public event Action<JObject> SceneReceived;
         public event Action<JObject> TerrainReceived;
@@ -67,6 +68,7 @@ namespace EverestSim
         public event Action<JObject> FaultReceived;
         public event Action<JObject> ControlAckReceived;
         public event Action<JObject> SensorsReceived;
+        public event Action<JObject> SubsetViewReceived;
 
         private void Awake()
         {
@@ -309,6 +311,10 @@ namespace EverestSim
                     LatestSensors = data;
                     SensorsReceived?.Invoke(data);
                     break;
+                case "subset_view":
+                    LatestSubsetView = data;
+                    SubsetViewReceived?.Invoke(data);
+                    break;
             }
         }
 
@@ -325,6 +331,17 @@ namespace EverestSim
         public void SendManualForceMode(bool enabled) => SendControl("manual_force_mode", JToken.FromObject(enabled));
         public void SendSnowParameters(JObject parameters) => SendControl("snow_parameters", parameters);
         public void SendWeather(JObject weather) => SendControl("weather", weather);
+        public void SendPolicySelect(string key) => SendControl("policy_select", JToken.FromObject(key));
+        public void SendRetrainRequest() => SendControl("retrain_request", JValue.CreateNull());
+        public void SendDemoFailure() => SendControl("demo_failure", JValue.CreateNull());
+        public void SendDemoPretrained(string key) => SendControl("demo_return_pretrained", JToken.FromObject(key));
+        public void SendSubsetPreview(bool enabled) => SendControl("subset_preview", JToken.FromObject(enabled));
+        public void SendCheckpointReturn(string key, string path) => SendControl("checkpoint_return", new JObject
+        {
+            ["key"] = key,
+            ["label"] = $"Returned {key} policy",
+            ["path"] = path
+        });
 
         public void SendControl(string action, JToken value)
         {

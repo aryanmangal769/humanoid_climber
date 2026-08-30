@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import copy
+import base64
 from io import BytesIO
 import json
 import math
+import os
 from pathlib import Path
 import threading
 import time
+import uuid
 from typing import Any
 import xml.etree.ElementTree as ET
 
+# The backend is headless; native MuJoCo subset previews need an offscreen GL
+# platform selected before mujoco is imported. Operators may still override it.
+os.environ.setdefault("MUJOCO_GL", "egl")
 import mujoco
 import numpy as np
 from PIL import Image
@@ -19,6 +25,7 @@ from PIL import Image
 from ..g1_model import G1_XML
 from ..policy import DEFAULT_CHECKPOINT, G1VelocityPolicy
 from simulation.newton_snow import FootPose, NewtonSnowPatch
+from simulation.policy_supervisor import PolicySupervisor, predict_imbalance
 from simulation.snow import SURFACES, SnowLayer
 
 
@@ -221,6 +228,19 @@ class MuJoCoEngine:
         self.model.opt.iterations = max(10, self.model.opt.iterations)
         self._policy_period = 0.02
         self._next_policy_time = 0.0
+        self._next_supervisor_time = 0.0
+        self._policy_supervisor = PolicySupervisor()
+        self._policy_selection_key = "auto"
+        self._last_auto_route_signature: tuple[str, str] | None = None
+        self._policy_registry = self._build_policy_registry()
+        if self._policy is not None:
+            self._policy_supervisor.activate_policy(
+                "flat", "Flat-ground walker", str(self._policy.path), sim_time=0.0
+            )
+        self._subset_preview_enabled = False
+        self._subset_preview_sequence = 0
+        self._subset_renderer = None
+        self._subset_preview_error: str | None = None
         self.period = 1.0 / telemetry_hz
         self._body_names = [
             mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id) or f"body_{body_id}"
@@ -252,6 +272,12 @@ class MuJoCoEngine:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=2)
+        if self._subset_renderer is not None:
+            try:
+                self._subset_renderer.close()
+            except Exception:
+                pass
+            self._subset_renderer = None
 
     def reset(self) -> None:
         with self._lock:
@@ -287,6 +313,18 @@ class MuJoCoEngine:
         self._snow_deformation_history.clear()
         self._snow_history_frames.clear()
         self._snow_history_revision += 1
+        self._policy_supervisor.failure_candidate_frames = 0
+        self._policy_supervisor.failure_latched = False
+        self._policy_supervisor.stage = "monitoring"
+        self._policy_supervisor.request_id = None
+        self._policy_supervisor.request_manifest = None
+        self._policy_supervisor.requested_at = None
+        self._policy_supervisor.risk = self._policy_supervisor.risk.__class__(0.0, 0.0, 0.0, 2, False)
+        self._policy_supervisor.route = self._policy_supervisor.route.__class__(
+            "flat / nominal terrain", "flat", "Flat-ground walker", 0.94, False,
+            "Nominal conditions fit the stock policy envelope."
+        )
+        self._last_auto_route_signature = None
         if self._snow_patch is not None:
             self._snow_patch.reset(self._foot_poses())
         # Keep the marker alive across several publications so a slower poll
@@ -751,6 +789,80 @@ class MuJoCoEngine:
                     self._stand_lock_enabled = False
                 self._command = (0.0, 0.0, 0.0)
                 self._publish_snapshot()
+            elif action == "policy_select":
+                key = str(value or "").strip()
+                if key == "auto":
+                    self._policy_selection_key = key
+                    checkpoint = next(item["checkpoint"] for item in self._policy_registry if item["key"] == "flat")
+                    policy = G1VelocityPolicy(checkpoint)
+                    policy.configure_mujoco_actuators(self.model)
+                    self._policy = policy
+                    self._policy_supervisor.activate_policy(
+                        "flat", "Flat-ground walker", checkpoint, sim_time=float(self.data.time)
+                    )
+                    self._last_auto_route_signature = None
+                    self._policy_supervisor.log(
+                        "SELECTOR",
+                        "Deterministic selector enabled; execution remains tied to loaded compatible checkpoints.",
+                        sim_time=float(self.data.time),
+                    )
+                    self._log_auto_route_execution()
+                elif key == "flat":
+                    self._policy_selection_key = key
+                    checkpoint = next(item["checkpoint"] for item in self._policy_registry if item["key"] == "flat")
+                    policy = G1VelocityPolicy(checkpoint)
+                    policy.configure_mujoco_actuators(self.model)
+                    self._policy = policy
+                    self._policy_supervisor.activate_policy(
+                        "flat", "Flat-ground walker", checkpoint, sim_time=float(self.data.time)
+                    )
+                elif key in {"ice_incline", "wind", "rough"}:
+                    self._policy_selection_key = key
+                    self._return_demo_pretrained(key)
+                elif key == self._policy_supervisor.active_policy_key and self._policy_supervisor.demo_pretrained:
+                    pass
+                else:
+                    raise ValueError("policy unavailable; return a demo-pretrained checkpoint or provide a compatible ONNX file")
+                self._publish_snapshot()
+            elif action == "retrain_request":
+                self._enter_safe_wait_and_request_training(
+                    "Operator requested retraining for the current Newton region."
+                )
+                self._publish_snapshot()
+            elif action == "demo_failure":
+                self._policy_supervisor.failure_latched = True
+                self._policy_supervisor.stage = "failure_detected"
+                self._policy_supervisor.log(
+                    "FAILURE DETECTED",
+                    "Demo failure injected through the operator UI.",
+                    sim_time=float(self.data.time),
+                )
+                self._enter_safe_wait_and_request_training("Demo failure confirmed; moved to safe wait.")
+                self._publish_snapshot()
+            elif action == "demo_return_pretrained":
+                key = str(value or self._policy_supervisor.route.requested_key)
+                if key not in {"ice_incline", "wind", "rough"}:
+                    key = "ice_incline"
+                self._policy_selection_key = key
+                self._return_demo_pretrained(key)
+                self._publish_snapshot()
+            elif action == "checkpoint_return" and isinstance(value, dict):
+                path = Path(str(value.get("path") or "")).expanduser().resolve()
+                key = str(value.get("key") or self._policy_supervisor.route.requested_key)
+                label = str(value.get("label") or f"Returned {key} policy")
+                policy = G1VelocityPolicy(path)
+                policy.configure_mujoco_actuators(self.model)
+                self._policy = policy
+                self._policy_selection_key = key
+                self._policy_supervisor.activate_policy(
+                    key, label, str(path), sim_time=float(self.data.time), demo_pretrained=False
+                )
+                self._paused = False
+                self._stand_lock_enabled = True
+                self._publish_snapshot()
+            elif action == "subset_preview":
+                self._subset_preview_enabled = bool(value)
+                self._publish_snapshot()
             elif action == "terrain_edit" and isinstance(value, dict):
                 self._apply_terrain_edit(value)
                 if self.snow.column is not None and self.snow.surface == "snow":
@@ -927,8 +1039,182 @@ class MuJoCoEngine:
 
     def _policy_status(self) -> dict[str, Any]:
         if self._policy is None:
-            return {"enabled": False, "error": self._policy_error}
-        return {"enabled": True, "command": self._command, **self._policy.status()}
+            base = {"enabled": False, "error": self._policy_error}
+        else:
+            base = {"enabled": True, "command": self._command, **self._policy.status()}
+        base.update({
+            "selected_policy_key": self._policy_selection_key,
+            "registry": copy.deepcopy(self._policy_registry),
+            "supervisor": self._policy_supervisor.manifest(),
+            "subset_preview_enabled": self._subset_preview_enabled,
+            "subset_preview_error": self._subset_preview_error,
+        })
+        return base
+
+    def _build_policy_registry(self) -> list[dict[str, Any]]:
+        checkpoint = str(self._policy.path) if self._policy is not None else str(DEFAULT_CHECKPOINT)
+        return [
+            {"key": "auto", "label": "Deterministic selector", "status": "selector", "checkpoint": None},
+            {"key": "flat", "label": "Flat-ground walker", "status": "available", "checkpoint": checkpoint},
+            {"key": "ice_incline", "label": "Low-friction incline", "status": "demo_pretrained", "checkpoint": checkpoint, "surrogate": True},
+            {"key": "wind", "label": "Wind walker", "status": "demo_pretrained", "checkpoint": checkpoint, "surrogate": True},
+            {"key": "rough", "label": "Rough-terrain walker", "status": "demo_pretrained", "checkpoint": checkpoint, "surrogate": True},
+            {"key": "recovery", "label": "Supine recovery", "status": "incompatible_unavailable", "checkpoint": None},
+        ]
+
+    def _supervisor_context(self) -> dict[str, Any]:
+        x = float(self.data.qpos[0])
+        y = float(self.data.qpos[1])
+        sample = 0.08
+        dz_dx = (self._terrain_height(x + sample, y) - self._terrain_height(x - sample, y)) / (2.0 * sample)
+        dz_dy = (self._terrain_height(x, y + sample) - self._terrain_height(x, y - sample)) / (2.0 * sample)
+        return {
+            "slope_gradient": math.hypot(dz_dx, dz_dy),
+            "friction": float(self._weather_parameters()["effective_friction"]),
+            "roughness_m": float(self._snow_patch.max_sinkage_m if self._snow_patch is not None else 0.0),
+            "wind_force_n": float(self._wind_force_n),
+            "surface": self.snow.surface,
+        }
+
+    def _measure_failure_risk(self):
+        pelvis = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
+        rotation = np.asarray(self.data.xmat[pelvis], dtype=np.float64).reshape(3, 3)
+        up_body = rotation.T @ np.asarray((0.0, 0.0, 1.0), dtype=np.float64)
+        angular_body = rotation.T @ np.asarray(self.data.qvel[3:6], dtype=np.float64)
+        contacts = self._foot_contact_telemetry()
+        feet = sum(bool(item["contact"]) for item in contacts.values())
+        return predict_imbalance(tuple(up_body), tuple(angular_body), feet)
+
+    def _capture_retrain_subset(self) -> tuple[str, str]:
+        request_id = f"snow-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        directory = ROOT / "runs" / "retrain_requests" / request_id
+        directory.mkdir(parents=True, exist_ok=False)
+        terrain = (
+            copy.deepcopy(self._snow_patch.terrain_frame(include_particles=False))
+            if self._snow_patch is not None
+            else {
+                "mode": "rigid",
+                "surface_kind": self.snow.surface,
+                "origin": [
+                    float(self.data.qpos[0]),
+                    float(self.data.qpos[1]),
+                    self._terrain_height(float(self.data.qpos[0]), float(self.data.qpos[1])),
+                ],
+                "size": [2.0 * self._physics_radius_m, 2.0 * self._physics_radius_m],
+            }
+        )
+        manifest = {
+            "schema": "everest-rl-subset/v1",
+            "request_id": request_id,
+            "created_at": time.time(),
+            "sim_time": float(self.data.time),
+            "source": "current Newton moving window",
+            "policy_request": self._policy_supervisor.route.requested_key,
+            "failure_risk": self._policy_supervisor.manifest()["detector"],
+            "environment": {
+                "surface": self.snow.surface,
+                "weather": copy.deepcopy(self._weather),
+                "context": self._supervisor_context(),
+                "terrain": terrain,
+                "robot_qpos": self.data.qpos.tolist(),
+                "robot_qvel": self.data.qvel.tolist(),
+                "command": list(self._command),
+                "feet": self._foot_contact_telemetry(),
+            },
+            "training": {
+                "status": "requested_not_launched",
+                "reason": "No external trainer endpoint is configured.",
+                "expected_return": "compatible 98-observation / 29-action ONNX checkpoint",
+            },
+        }
+        path = directory / "manifest.json"
+        path.write_text(json.dumps(manifest, indent=2))
+        return request_id, str(path)
+
+    def _enter_safe_wait_and_request_training(self, reason: str) -> None:
+        if self._policy_supervisor.stage == "waiting_checkpoint":
+            return
+        self._command = (0.0, 0.0, 0.0)
+        self._manual_force_mode = False
+        self._cheat_mode = False
+        self._stand_lock_enabled = True
+        self._stand_lock_xy = np.asarray(self.data.qpos[:2], dtype=np.float64).copy()
+        self._stand_lock_quat = np.asarray(self.data.qpos[3:7], dtype=np.float64).copy()
+        self._stand_lock_min_z = float(self.data.qpos[2] - 0.08)
+        self.data.qvel[:] = 0.0
+        self.data.qacc[:] = 0.0
+        self._paused = True
+        request_id, manifest = self._capture_retrain_subset()
+        self._policy_supervisor.log("SAFE HOLD", reason, sim_time=float(self.data.time))
+        self._policy_supervisor.request_training(request_id, manifest, sim_time=float(self.data.time))
+        self._subset_preview_enabled = True
+
+    def _return_demo_pretrained(self, key: str) -> None:
+        spec = next((item for item in self._policy_registry if item["key"] == key), None)
+        if spec is None or spec.get("status") != "demo_pretrained":
+            raise ValueError("selected policy has no demo-pretrained return")
+        policy = G1VelocityPolicy(spec["checkpoint"])
+        policy.configure_mujoco_actuators(self.model)
+        self._policy = policy
+        self._policy_supervisor.activate_policy(
+            key,
+            str(spec["label"]),
+            str(spec["checkpoint"]),
+            sim_time=float(self.data.time),
+            demo_pretrained=True,
+        )
+        self._paused = False
+        self._stand_lock_enabled = True
+
+    def _log_auto_route_execution(self) -> None:
+        if self._policy_selection_key != "auto":
+            return
+        route = self._policy_supervisor.route
+        signature = (route.terrain_type, route.requested_key)
+        if signature == self._last_auto_route_signature:
+            return
+        self._last_auto_route_signature = signature
+        if route.requested_key == "flat":
+            message = "Selector chose nominal terrain; executing the loaded Flat-ground walker checkpoint."
+        else:
+            message = (
+                f"Selector requested {route.requested_label}, but no compatible specialist checkpoint is loaded; "
+                "executing the Flat-ground walker fallback."
+            )
+        self._policy_supervisor.log("EXECUTION", message, sim_time=float(self.data.time))
+
+    def subset_preview(self) -> dict[str, Any] | None:
+        if not self._subset_preview_enabled:
+            return None
+        with self._lock:
+            try:
+                if self._subset_renderer is None:
+                    self._subset_renderer = mujoco.Renderer(self.model, height=240, width=320)
+                camera = mujoco.MjvCamera()
+                camera.type = mujoco.mjtCamera.mjCAMERA_FREE
+                camera.lookat[:] = (float(self.data.qpos[0]), float(self.data.qpos[1]), float(self.data.qpos[2]) * 0.45)
+                camera.distance = 2.8
+                camera.azimuth = 135.0
+                camera.elevation = -28.0
+                self._subset_renderer.update_scene(self.data, camera=camera)
+                pixels = self._subset_renderer.render()
+                output = BytesIO()
+                Image.fromarray(pixels).save(output, format="JPEG", quality=72)
+                self._subset_preview_sequence += 1
+                self._subset_preview_error = None
+                return {
+                    "schema": "everest-mujoco-subset-preview/v1",
+                    "sequence": self._subset_preview_sequence,
+                    "request_id": self._policy_supervisor.request_id,
+                    "encoding": "jpeg/base64",
+                    "width": 320,
+                    "height": 240,
+                    "image": base64.b64encode(output.getvalue()).decode("ascii"),
+                    "caption": "Raw MuJoCo view of the current Newton-window RL subset",
+                }
+            except Exception as exc:
+                self._subset_preview_error = f"{type(exc).__name__}: {exc}"
+                return None
 
     def _foot_floor_pairs(self) -> list[int]:
         floor = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "floor")
@@ -1387,6 +1673,20 @@ class MuJoCoEngine:
                 self.data.xfrc_applied[pelvis, :2] -= np.asarray(self.data.qvel[:2]) * 42.0
                 self.data.xfrc_applied[pelvis, 5] -= float(self.data.qvel[5]) * 7.0
             mujoco.mj_step(self.model, self.data)
+            if self.data.time + 1.0e-9 >= self._next_supervisor_time:
+                risk = self._measure_failure_risk()
+                confirmed = self._policy_supervisor.observe(
+                    risk,
+                    self._supervisor_context(),
+                    sim_time=float(self.data.time),
+                )
+                self._log_auto_route_execution()
+                self._next_supervisor_time = float(self.data.time) + self._policy_period
+                if confirmed:
+                    self._enter_safe_wait_and_request_training(
+                        "Deterministic IMU/contact detector confirmed imminent failure."
+                    )
+                    break
             if self._stand_lock_enabled and not moving_command and not self._manual_force_mode:
                 # Settlement-inspection constraint: keep the unsupported
                 # flat-ground controller from translating or toppling the

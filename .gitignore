@@ -3,6 +3,7 @@ vendor/mujoco_playground/external_deps/
 .venv-rl/
 .venv-isaacsim/
 logs/
+runs/retrain_requests/
 __pycache__/
 *.pyc
 

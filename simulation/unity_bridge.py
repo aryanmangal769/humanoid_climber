@@ -16,6 +16,7 @@ from typing import Any
 
 import websockets
 from websockets.asyncio.server import ServerConnection
+from websockets.exceptions import ConnectionClosed
 
 from dashboard.engines.mujoco import MuJoCoEngine, ROOT
 from simulation.data_sources import LiveDataSource
@@ -339,7 +340,16 @@ class UnityRendererBridge:
                 "deposited_depth_m": float(mpm.get("deposited_depth_m", 0.0)),
                 "deposited_mass_kg": float(mpm.get("deposited_mass_kg", 0.0)),
             },
-            "policy": {"active": bool(policy.get("enabled")), "inference_count": policy.get("inference_count", 0)},
+            "policy": {
+                "active": bool(policy.get("enabled")),
+                "inference_count": policy.get("inference_count", 0),
+                "checkpoint": policy.get("checkpoint"),
+                "selected_policy_key": policy.get("selected_policy_key", "auto"),
+                "registry": copy.deepcopy(policy.get("registry") or []),
+                "supervisor": copy.deepcopy(policy.get("supervisor") or {}),
+                "subset_preview_enabled": bool(policy.get("subset_preview_enabled", False)),
+                "subset_preview_error": policy.get("subset_preview_error"),
+            },
             "paused": bool(raw.get("paused", True)),
             "simulation_fault": raw.get("simulation_fault") or raw.get("telemetry_error"),
             "snow_history": copy.deepcopy(raw.get("snow_history") or {}),
@@ -441,7 +451,11 @@ class UnityRendererBridge:
                     "snowfall_mm_h": float(self.environment["snowfall_mm_h"]),
                 })
             return
-        if action in {"command", "pause", "reset", "snow_parameters"}:
+        if action in {
+            "command", "pause", "reset", "snow_parameters", "policy_select",
+            "retrain_request", "demo_failure", "demo_return_pretrained", "subset_preview",
+            "checkpoint_return",
+        }:
             self.engine.control(action, value)
             if action == "snow_parameters" and isinstance(value, dict):
                 for key in ("temperature_c", "wind_speed_m_s", "wind_direction_deg", "snowfall_mm_h"):
@@ -459,89 +473,103 @@ async def _serve_client(socket: ServerConnection, bridge: UnityRendererBridge) -
     await socket.send(_message("state", bridge.state()))
 
     async def receive_controls() -> None:
-        async for raw in socket:
-            try:
-                payload = json.loads(raw)
-                if payload.get("type") != "control":
-                    raise ValueError("client messages must use type=control")
-                bridge.control(str(payload.get("action")), payload.get("value"))
-                await socket.send(_message("control_ack", {"action": payload.get("action"), "ok": True}))
-                if payload.get("action") == "mode":
-                    await socket.send(_message("state", bridge.state()))
-                    await socket.send(_message("environment", bridge.environment_payload()))
-            except Exception as exc:
-                error = {"ok": False, "message": str(exc)}
-                if isinstance(exc, ControlRejected):
-                    error["code"] = exc.code
-                await socket.send(_message("control_ack", error))
+        try:
+            async for raw in socket:
+                try:
+                    payload = json.loads(raw)
+                    if payload.get("type") != "control":
+                        raise ValueError("client messages must use type=control")
+                    bridge.control(str(payload.get("action")), payload.get("value"))
+                    await socket.send(_message("control_ack", {"action": payload.get("action"), "ok": True}))
+                    if payload.get("action") == "mode":
+                        await socket.send(_message("state", bridge.state()))
+                        await socket.send(_message("environment", bridge.environment_payload()))
+                except ConnectionClosed:
+                    return
+                except Exception as exc:
+                    error = {"ok": False, "message": str(exc)}
+                    if isinstance(exc, ControlRejected):
+                        error["code"] = exc.code
+                    await socket.send(_message("control_ack", error))
+        except ConnectionClosed:
+            return
 
     async def publish() -> None:
-        next_frame = next_snow = next_state = 0.0
+        next_frame = next_snow = next_state = next_subset = 0.0
         last_frame: tuple[int, int] | None = None
         last_snow: tuple[int, int] | None = None
         last_terrain: tuple[int, int] | None = None
         last_sensors: tuple[int, float] | None = None
         last_history = -1
         last_fault: str | None = None
-        while True:
-            now = asyncio.get_running_loop().time()
-            if now >= next_frame:
-                frame = bridge.frame()
-                frame_key = None if frame is None else (
-                    int(frame.get("source_epoch", 0)), int(frame.get("sequence", 0))
-                )
-                if frame is not None and frame_key != last_frame:
-                    await socket.send(_message("frame", frame))
-                    last_frame = frame_key
-                next_frame = now + 1.0 / 60.0
-            if now >= next_snow:
-                snow = bridge.snow()
-                snow_key = None if snow is None else (
-                    int(snow.get("source_epoch", 0)), int(snow.get("sequence", 0))
-                )
-                if snow is not None and snow_key != last_snow:
-                    await socket.send(_message("snow", snow))
-                    last_snow = snow_key
-                terrain = bridge.terrain()
-                terrain_key = None if terrain is None else (
-                    int(terrain.get("source_epoch", 0)), int(terrain.get("sequence", 0))
-                )
-                if terrain is not None and terrain_key != last_terrain:
-                    await socket.send(_message("terrain", terrain))
-                    last_terrain = terrain_key
-                sensors = bridge.sensors()
-                sensors_key = None if sensors is None else (
-                    int(sensors.get("source_epoch", 0)), float(sensors.get("sample_time", 0.0))
-                )
-                if sensors is not None and sensors_key != last_sensors:
-                    await socket.send(_message("sensors", sensors))
-                    last_sensors = sensors_key
-                if bridge.data_mode == "sim":
-                    history = bridge.snow_history()
-                    if history["sequence"] != last_history:
-                        await socket.send(_message("snow_history", history))
-                        last_history = history["sequence"]
-                next_snow = now + 1.0 / 15.0
-            if now >= next_state:
-                state = bridge.state()
-                await socket.send(_message("state", state))
-                await socket.send(_message("environment", bridge.environment_payload()))
-                fault = state.get("simulation_fault")
-                if fault and fault != last_fault:
-                    await socket.send(_message("fault", {
-                        "source": "live_telemetry" if bridge.data_mode == "live" else "physics",
-                        "message": fault,
-                        "sim_time": state["sim_time"],
-                    }))
-                last_fault = fault
-                next_state = now + 0.5
-            await asyncio.sleep(0.003)
+        try:
+            while True:
+                now = asyncio.get_running_loop().time()
+                if now >= next_frame:
+                    frame = bridge.frame()
+                    frame_key = None if frame is None else (
+                        int(frame.get("source_epoch", 0)), int(frame.get("sequence", 0))
+                    )
+                    if frame is not None and frame_key != last_frame:
+                        await socket.send(_message("frame", frame))
+                        last_frame = frame_key
+                    next_frame = now + 1.0 / 60.0
+                if now >= next_snow:
+                    snow = bridge.snow()
+                    snow_key = None if snow is None else (
+                        int(snow.get("source_epoch", 0)), int(snow.get("sequence", 0))
+                    )
+                    if snow is not None and snow_key != last_snow:
+                        await socket.send(_message("snow", snow))
+                        last_snow = snow_key
+                    terrain = bridge.terrain()
+                    terrain_key = None if terrain is None else (
+                        int(terrain.get("source_epoch", 0)), int(terrain.get("sequence", 0))
+                    )
+                    if terrain is not None and terrain_key != last_terrain:
+                        await socket.send(_message("terrain", terrain))
+                        last_terrain = terrain_key
+                    sensors = bridge.sensors()
+                    sensors_key = None if sensors is None else (
+                        int(sensors.get("source_epoch", 0)), float(sensors.get("sample_time", 0.0))
+                    )
+                    if sensors is not None and sensors_key != last_sensors:
+                        await socket.send(_message("sensors", sensors))
+                        last_sensors = sensors_key
+                    if bridge.data_mode == "sim":
+                        history = bridge.snow_history()
+                        if history["sequence"] != last_history:
+                            await socket.send(_message("snow_history", history))
+                            last_history = history["sequence"]
+                    next_snow = now + 1.0 / 15.0
+                if now >= next_state:
+                    state = bridge.state()
+                    await socket.send(_message("state", state))
+                    await socket.send(_message("environment", bridge.environment_payload()))
+                    fault = state.get("simulation_fault")
+                    if fault and fault != last_fault:
+                        await socket.send(_message("fault", {
+                            "source": "live_telemetry" if bridge.data_mode == "live" else "physics",
+                            "message": fault,
+                            "sim_time": state["sim_time"],
+                        }))
+                    last_fault = fault
+                    next_state = now + 0.5
+                if now >= next_subset and bridge.data_mode == "sim":
+                    subset = bridge.engine.subset_preview()
+                    if subset is not None:
+                        await socket.send(_message("subset_view", subset))
+                    next_subset = now + 1.0
+                await asyncio.sleep(0.003)
+        except ConnectionClosed:
+            return
 
     receiver = asyncio.create_task(receive_controls())
     publisher = asyncio.create_task(publish())
     done, pending = await asyncio.wait((receiver, publisher), return_when=asyncio.FIRST_COMPLETED)
     for task in pending:
         task.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
     for task in done:
         task.result()
 
