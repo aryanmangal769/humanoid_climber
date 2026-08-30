@@ -14,6 +14,14 @@ from simulation.unity_bridge import DEFAULT_SNOW
 def main() -> None:
     engine = MuJoCoEngine()
     try:
+        actuated_joints = [int(engine.model.actuator_trnid[index, 0]) for index in range(engine.model.nu)]
+        assert engine.model.nu == 29
+        assert len(set(actuated_joints)) == 29
+        assert all(
+            float(engine.model.actuator_ctrlrange[index, 1])
+            > float(engine.model.actuator_ctrlrange[index, 0])
+            for index in range(engine.model.nu)
+        )
         # Match the real Unity bridge startup path so this acceptance test
         # verifies capture of an actual live Newton/MPM region, not the
         # engine's pre-configuration rigid fallback.

@@ -321,6 +321,7 @@ namespace EverestSim
         public void SendCommand(float forward, float lateral, float yaw) =>
             SendControl("command", new JArray(forward, lateral, yaw));
 
+        public void SendPlay() => SendControl("play", JValue.CreateNull());
         public void SendPause(bool paused) => SendControl("pause", JToken.FromObject(paused));
         public void SendReset() => SendControl("reset", JValue.CreateNull());
         public void SendMode(string mode) => SendControl("mode", JToken.FromObject(mode));

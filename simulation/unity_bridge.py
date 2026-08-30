@@ -452,7 +452,7 @@ class UnityRendererBridge:
                 })
             return
         if action in {
-            "command", "pause", "reset", "snow_parameters", "policy_select",
+            "command", "pause", "play", "reset", "snow_parameters", "policy_select",
             "retrain_request", "demo_failure", "demo_return_pretrained", "subset_preview",
             "checkpoint_return",
         }:

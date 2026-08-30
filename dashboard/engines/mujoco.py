@@ -597,6 +597,7 @@ class MuJoCoEngine:
                         self._stand_lock_enabled
                         and not self._cheat_mode
                         and not self._manual_force_mode
+                        and not any(abs(item) > 1.0e-6 for item in self._command)
                     ),
                     "stand_lock_max_settlement_m": 0.08,
                     "cheat_speed_m_s": self._cheat_speed_m_s,
@@ -626,10 +627,17 @@ class MuJoCoEngine:
         # GIL; the simulation thread observes the new values at its next
         # MuJoCo substep. Snapshot publication remains on the main state lock.
         if action == "pause":
+            if not bool(value) and self._policy_supervisor.stage == "waiting_checkpoint":
+                raise ValueError("safe hold is waiting for a compatible checkpoint or reset")
             self._paused = bool(value)
             return
         if action == "command" and isinstance(value, (list, tuple)) and len(value) == 3:
             command = tuple(float(item) for item in value)
+            if (
+                self._policy_supervisor.stage == "waiting_checkpoint"
+                and any(abs(item) > 1.0e-9 for item in command)
+            ):
+                raise ValueError("safe hold is waiting for a compatible checkpoint or reset")
             if (
                 not self._cheat_mode
                 and not self._weather_parameters()["movement_allowed"]
@@ -650,6 +658,8 @@ class MuJoCoEngine:
                 # Start the velocity-policy demo atomically. Keeping command
                 # and pause in one request avoids browser frame polling racing
                 # the two state changes and leaving the engine paused.
+                if self._policy_supervisor.stage == "waiting_checkpoint":
+                    raise ValueError("safe hold is waiting for a compatible checkpoint or reset")
                 if not self._weather_parameters()["movement_allowed"]:
                     raise ValueError("Movement is disabled by the active weather risk gate")
                 self._command = (-0.1, 0.0, 0.0)
@@ -765,6 +775,8 @@ class MuJoCoEngine:
                 self._publish_snapshot()
             elif action == "cheat_mode":
                 enabled = bool(value)
+                if enabled and self._policy_supervisor.stage == "waiting_checkpoint":
+                    raise ValueError("safe hold is waiting for a compatible checkpoint or reset")
                 if enabled != self._cheat_mode:
                     if enabled:
                         self._stand_lock_enabled = False
@@ -784,6 +796,8 @@ class MuJoCoEngine:
                     mujoco.mj_forward(self.model, self.data)
                 self._publish_snapshot()
             elif action == "manual_force_mode":
+                if bool(value) and self._policy_supervisor.stage == "waiting_checkpoint":
+                    raise ValueError("safe hold is waiting for a compatible checkpoint or reset")
                 self._manual_force_mode = bool(value)
                 if self._manual_force_mode:
                     self._stand_lock_enabled = False

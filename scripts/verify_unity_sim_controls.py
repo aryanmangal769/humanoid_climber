@@ -65,6 +65,18 @@ async def main() -> None:
             assert state.get("data_mode") == "sim", state
             assert state.get("surface") == "snow", state
 
+            initial_time = float(state["sim_time"])
+            await control(ws, "play")
+            deadline = time.monotonic() + 6.0
+            while time.monotonic() < deadline:
+                state = await recv_until(ws, "state")
+                if float(state["sim_time"]) > initial_time + 0.05:
+                    break
+            else:
+                raise AssertionError("RUN/play did not start the policy simulation")
+            assert state.get("simulation_settings", {}).get("stand_lock_active") is False, state
+            await control(ws, "pause", True)
+
             await control(ws, "simulation_settings", {
                 "physics_radius_m": 1.5,
                 "mpm_voxel_size_m": 0.10,
@@ -142,6 +154,13 @@ async def main() -> None:
             assert terrain.get("layer_vertices"), terrain
             assert terrain.get("mpm", {}).get("solver"), terrain
             assert subset and subset.get("encoding") == "jpeg/base64"
+
+            held_run = await control(ws, "play", expected_ok=False)
+            assert "safe hold" in held_run.get("message", "").lower(), held_run
+            held_manual = await control(ws, "manual_force_mode", True, expected_ok=False)
+            assert "safe hold" in held_manual.get("message", "").lower(), held_manual
+            held_command = await control(ws, "command", [1.0, 0.0, 0.0], expected_ok=False)
+            assert "safe hold" in held_command.get("message", "").lower(), held_command
 
             bad_return = await control(ws, "checkpoint_return", {
                 "key": "ice_incline",

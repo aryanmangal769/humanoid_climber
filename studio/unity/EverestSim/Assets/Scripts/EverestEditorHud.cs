@@ -423,11 +423,19 @@ namespace EverestSim
             }
 
             var paused = _runtime == null || _runtime.Paused;
-            var playLabel = veryNarrow ? (paused ? "▶" : "Ⅱ") : paused ? "▶ RUN" : "Ⅱ PAUSE";
+            var supervisor = _backend.LatestState?["policy"]?["supervisor"] as JObject;
+            var waitingCheckpoint = supervisor?.Value<string>("stage") == "waiting_checkpoint";
+            var playLabel = waitingCheckpoint
+                ? (veryNarrow ? "!" : "SAFE HOLD")
+                : veryNarrow ? (paused ? "▶" : "Ⅱ") : paused ? "▶ RUN" : "Ⅱ PAUSE";
             var controlsEnabled = GUI.enabled;
+            GUI.enabled = controlsEnabled && _dataMode == "sim" && !waitingCheckpoint;
+            if (GUILayout.Button(playLabel, waitingCheckpoint ? _buttonDanger : paused ? _buttonActive : _button, GUILayout.Width(veryNarrow ? 34f : compact ? 62f : 68f)))
+            {
+                if (paused) _backend.SendPlay();
+                else _backend.SendPause(true);
+            }
             GUI.enabled = controlsEnabled && _dataMode == "sim";
-            if (GUILayout.Button(playLabel, paused ? _buttonActive : _button, GUILayout.Width(veryNarrow ? 34f : compact ? 62f : 68f)))
-                _backend.SendPause(!paused);
             if (GUILayout.Button(veryNarrow ? "↺" : "RESET SIM", _button, GUILayout.Width(veryNarrow ? 34f : compact ? 58f : 68f)))
                 _backend.SendReset();
             GUI.enabled = controlsEnabled;
@@ -443,7 +451,7 @@ namespace EverestSim
 
             if (!compact)
             {
-                GUI.enabled = controlsEnabled && _dataMode == "sim";
+                GUI.enabled = controlsEnabled && _dataMode == "sim" && !waitingCheckpoint;
                 var manual = _runtime != null && _runtime.ManualControlEnabled;
                 if (GUILayout.Button(manual ? "CONTROL ON" : "CONTROL", manual ? _buttonActive : _button, GUILayout.Width(76f)))
                     _runtime?.SetManualControl(!manual);
@@ -757,7 +765,9 @@ namespace EverestSim
         {
             BeginSection("ROBOT / CAMERA");
             var wasEnabled = GUI.enabled;
-            GUI.enabled = wasEnabled && _dataMode == "sim";
+            var supervisor = _backend.LatestState?["policy"]?["supervisor"] as JObject;
+            var waitingCheckpoint = supervisor?.Value<string>("stage") == "waiting_checkpoint";
+            GUI.enabled = wasEnabled && _dataMode == "sim" && !waitingCheckpoint;
             var manual = _runtime != null && _runtime.ManualControlEnabled;
             var cheat = _runtime != null && _runtime.CheatModeEnabled;
             GUILayout.BeginHorizontal();
