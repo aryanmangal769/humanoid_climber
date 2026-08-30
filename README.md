@@ -1,9 +1,23 @@
-# Humanoid Climber
+# SummitOS — Humanoid Climber
 
-Repository-owned MjLab tasks and policy-routing research for a Unitree G1 that
-can walk, climb low-friction slopes, resist wind, recover from a fall, and
-eventually cross rough terrain. MjLab remains an external Python dependency;
-its source is not copied into this repository.
+SummitOS is a runtime orchestration layer for autonomous Unitree G1 locomotion
+across changing terrain and weather conditions. It classifies environmental
+conditions and routes observations to specialist reinforcement-learning
+policies for flat ground, low-friction inclines, crosswind, and rough terrain.
+Its Motion Profile exposes live velocity, friction, incline, wind-force, and
+active-policy telemetry. A safety monitor detects falls and activates a learned
+recovery controller before locomotion resumes. Deterministic stage scheduling
+and audited randomization ranges make the multi-policy system reproducible and
+testable. A scalable policy-serving layer allows additional specialist
+controllers to be registered, versioned, and deployed without changing the
+core runtime.
+
+## Two-minute SummitOS presentation and demo
+
+<video src="./SummitOS-presentation-and-demo.mp4" controls width="100%" title="SummitOS two-minute presentation and demo"></video>
+
+MjLab remains an external Python dependency; its source is not copied into this
+repository.
 
 ## Setup
 

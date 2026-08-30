@@ -783,6 +783,48 @@
       background: linear-gradient(90deg, var(--glacier), rgba(79, 193, 213, 0.12));
     }
 
+    .deck-controls {
+      position: absolute;
+      left: 50%;
+      bottom: 1.05rem;
+      z-index: 50;
+      display: flex;
+      gap: 0.5rem;
+      transform: translateX(-50%);
+    }
+
+    .deck-control {
+      width: 2.65rem;
+      height: 2.65rem;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      border: 1px solid rgba(158, 232, 242, 0.24);
+      border-radius: 50%;
+      color: var(--ink);
+      background: rgba(7, 24, 29, 0.88);
+      box-shadow: 0 0.6rem 1.5rem rgba(0, 0, 0, 0.24);
+      cursor: pointer;
+      transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+    }
+
+    .deck-control:hover {
+      border-color: rgba(158, 232, 242, 0.58);
+      background: rgba(18, 51, 59, 0.96);
+      transform: translateY(-0.08rem);
+    }
+
+    .deck-control:focus-visible {
+      outline: 0.16rem solid var(--ice);
+      outline-offset: 0.18rem;
+    }
+
+    .deck-control:disabled {
+      opacity: 0.28;
+      cursor: default;
+      transform: none;
+    }
+
     .policy-story {
       position: relative;
       min-height: 0;
@@ -1001,11 +1043,25 @@
 
     .os-heading h2 span { color: var(--ice); }
 
-    .os-heading p {
+    .stage-caption {
+      position: relative;
+      height: 1.9rem;
       margin: 0.55rem 0 0;
-      font-size: 1.35rem;
+      font-size: 1.5rem;
       color: #b9cdd2;
     }
+
+    .stage-caption span {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transform: translateY(0.45rem);
+    }
+
+    .slide-3.active .caption-policies { animation: caption-policies 26s var(--ease-in-out) forwards; }
+    .slide-3.active .caption-runtime { animation: caption-runtime 26s var(--ease-in-out) forwards; }
+    .slide-3.active .caption-training { animation: caption-training 26s var(--ease-in-out) forwards; }
+    .slide-3.active .caption-return { animation: caption-return 26s var(--ease-in-out) forwards; }
 
     .policy-bank {
       position: absolute;
@@ -1124,7 +1180,7 @@
     }
 
     .core-name {
-      font-size: 1.72rem;
+      font-size: 1.9rem;
       font-weight: 800;
       line-height: 1;
     }
@@ -1132,7 +1188,7 @@
     .core-role {
       margin-top: 0.38rem;
       font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-      font-size: 0.68rem;
+      font-size: 0.76rem;
       font-weight: 730;
       letter-spacing: 0.1em;
       text-transform: uppercase;
@@ -1198,14 +1254,14 @@
 
     .flow-node b {
       display: block;
-      font-size: 1.22rem;
+      font-size: 1.36rem;
       line-height: 1.1;
     }
 
     .flow-node small {
       display: block;
       margin-top: 0.28rem;
-      font-size: 0.82rem;
+      font-size: 0.92rem;
       line-height: 1.25;
       color: var(--muted);
     }
@@ -1253,7 +1309,7 @@
     .server-node {
       position: absolute;
       right: 1rem;
-      top: 9.3rem;
+      top: 11.3rem;
       width: 15rem;
       min-height: 4.4rem;
       display: grid;
@@ -1272,12 +1328,12 @@
       color: var(--ice);
     }
 
-    .server-node b { display: inline; font-size: 1.22rem; }
+    .server-node b { display: inline; font-size: 1.36rem; }
     .server-node small { max-width: 12rem; margin: 0.3rem auto 0; }
 
     .training-node {
       left: 50%;
-      top: 19.5rem;
+      top: 23.5rem;
       margin-left: -9rem;
       width: 18rem;
       min-height: 7rem;
@@ -1294,7 +1350,7 @@
       position: absolute;
       left: 50%;
       z-index: 2;
-      top: 18.2rem;
+      top: 22.2rem;
       width: 40rem;
       height: 9rem;
       margin-left: -20rem;
@@ -1317,7 +1373,7 @@
       align-self: center;
       text-align: center;
       font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-      font-size: 0.88rem;
+      font-size: 1.05rem;
       font-weight: 800;
       letter-spacing: 0.08em;
       text-transform: uppercase;
@@ -1344,20 +1400,20 @@
       padding: 0.3rem 0.5rem;
       border-radius: 0.35rem;
       font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-      font-size: 0.75rem;
+      font-size: 0.82rem;
       font-weight: 760;
       letter-spacing: 0.06em;
       text-transform: uppercase;
       background: #0a1c21;
     }
 
-    .request-label { right: 15rem; top: 7.15rem; color: var(--signal); }
-    .return-label { left: 17rem; top: 5.6rem; color: var(--safe); }
+    .request-label { right: 15rem; top: 8.6rem; color: var(--signal); }
+    .return-label { left: 17rem; top: 7.1rem; color: var(--safe); }
 
     .new-policy {
       position: absolute;
       left: 1rem;
-      top: 9.3rem;
+      top: 11.3rem;
       min-width: 15rem;
       min-height: 4.4rem;
       display: grid;
@@ -1369,7 +1425,40 @@
 
     .new-policy b { color: #b1f0cc; }
 
+    .loop-label {
+      position: absolute;
+      left: 50%;
+      top: 16.4rem;
+      z-index: 3;
+      transform: translateX(-50%);
+      padding: 0.38rem 0.72rem;
+      border: 1px solid rgba(158, 232, 242, 0.2);
+      border-radius: 999px;
+      background: rgba(7, 24, 29, 0.9);
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.95rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ice);
+      opacity: 0;
+    }
+
+    .loop-time {
+      position: absolute;
+      left: 50%;
+      top: 18.65rem;
+      z-index: 3;
+      transform: translateX(-50%);
+      font-size: 0.86rem;
+      font-weight: 700;
+      color: var(--muted);
+      opacity: 0;
+    }
+
     .learning-flow .unknown-state,
+    .learning-flow .loop-label,
+    .learning-flow .loop-time,
     .learning-flow .request-label,
     .learning-flow .server-node,
     .learning-flow .training-sim-grid,
@@ -1384,6 +1473,8 @@
     }
 
     .slide-3.active .learning-flow .unknown-state { animation: learn-unknown 26s var(--ease-out) forwards; }
+    .slide-3.active .learning-flow .loop-label { animation: learn-loop-label 26s var(--ease-out) forwards; }
+    .slide-3.active .learning-flow .loop-time { animation: learn-loop-label 26s var(--ease-out) forwards; }
     .slide-3.active .learning-flow .request-label,
     .slide-3.active .learning-flow .request-path {
       animation: learn-request 26s var(--ease-out) forwards, route-flow 1.35s linear infinite;
@@ -1413,6 +1504,9 @@
     body.preview-bank .slide-3 .runtime-flow,
     body.preview-bank .slide-3 .learning-flow { opacity: 0; animation: none; }
 
+    body.preview-bank .slide-3 .stage-caption span { opacity: 0; animation: none; }
+    body.preview-bank .slide-3 .stage-caption .caption-policies { opacity: 1; transform: none; }
+
     body.preview-runtime .slide-3 .policy-bank,
     body.preview-runtime .slide-3 .learning-flow { opacity: 0; }
 
@@ -1435,6 +1529,9 @@
 
     body.preview-runtime .slide-3 .core-policy-strip { opacity: 1; animation: none; }
 
+    body.preview-runtime .slide-3 .stage-caption span { opacity: 0; animation: none; }
+    body.preview-runtime .slide-3 .stage-caption .caption-runtime { opacity: 1; transform: none; }
+
     body.preview-learning .slide-3 .policy-bank,
     body.preview-learning .slide-3 .runtime-flow { opacity: 0; }
 
@@ -1456,6 +1553,8 @@
     body.preview-learning .slide-3 .learning-flow { opacity: 1; }
 
     body.preview-learning .slide-3 .learning-flow .unknown-state,
+    body.preview-learning .slide-3 .learning-flow .loop-label,
+    body.preview-learning .slide-3 .learning-flow .loop-time,
     body.preview-learning .slide-3 .learning-flow .request-label,
     body.preview-learning .slide-3 .learning-flow .server-node,
     body.preview-learning .slide-3 .learning-flow .training-sim-grid,
@@ -1477,6 +1576,9 @@
 
     body.preview-learning .slide-3 .learning-flow .training-node { opacity: 0; }
 
+    body.preview-learning .slide-3 .stage-caption span { opacity: 0; animation: none; }
+    body.preview-learning .slide-3 .stage-caption .caption-return { opacity: 1; transform: none; }
+
     body.preview-simulation .slide-3 .policy-bank,
     body.preview-simulation .slide-3 .runtime-flow { opacity: 0; }
 
@@ -1496,6 +1598,8 @@
     body.preview-simulation .slide-3 .core-policy-strip,
     body.preview-simulation .slide-3 .learning-flow,
     body.preview-simulation .slide-3 .learning-flow .unknown-state,
+    body.preview-simulation .slide-3 .learning-flow .loop-label,
+    body.preview-simulation .slide-3 .learning-flow .loop-time,
     body.preview-simulation .slide-3 .learning-flow .request-label,
     body.preview-simulation .slide-3 .learning-flow .server-node,
     body.preview-simulation .slide-3 .learning-flow .request-path,
@@ -1508,9 +1612,235 @@
     body.preview-simulation .slide-3 .learning-flow .return-label,
     body.preview-simulation .slide-3 .learning-flow .return-path { opacity: 0 !important; }
 
+    body.preview-simulation .slide-3 .stage-caption span { opacity: 0; animation: none; }
+    body.preview-simulation .slide-3 .stage-caption .caption-training { opacity: 1; transform: none; }
+
+    /* First beat starts on slide entry; subsequent beats wait for forward. */
+    body.interactive-mode .slide-2.active .story-heading,
+    body.interactive-mode .slide-2.active .success-scene,
+    body.interactive-mode .slide-2.active .success-grid .video-card,
+    body.interactive-mode .slide-2.active .failure-scene,
+    body.interactive-mode .slide-3.active .stage-caption span,
+    body.interactive-mode .slide-3.active .bank-policy,
+    body.interactive-mode .slide-3.active .summit-core,
+    body.interactive-mode .slide-3.active .core-policy-strip,
+    body.interactive-mode .slide-3.active .runtime-flow,
+    body.interactive-mode .slide-3.active .learning-flow,
+    body.interactive-mode .slide-3.active .learning-flow * { animation: none; }
+
+    body.interactive-mode .slide-2.active[data-step="0"] .story-heading,
+    body.interactive-mode .slide-2.active[data-step="0"] .success-scene {
+      opacity: 1;
+      transform: none;
+      filter: none;
+    }
+
+    body.interactive-mode .slide-2.active[data-step="0"] .failure-scene { opacity: 0; }
+
+    body.interactive-mode .slide-2.active[data-step="0"] .success-grid .video-card {
+      animation: click-card-in 650ms var(--ease-out) forwards;
+    }
+
+    body.interactive-mode .slide-2.active[data-step="0"] .success-grid .video-card:nth-child(1) { animation-delay: 40ms; }
+    body.interactive-mode .slide-2.active[data-step="0"] .success-grid .video-card:nth-child(2) { animation-delay: 180ms; }
+    body.interactive-mode .slide-2.active[data-step="0"] .success-grid .video-card:nth-child(3) { animation-delay: 320ms; }
+
+    body.interactive-mode .slide-2.active[data-step="1"] .story-heading,
+    body.interactive-mode .slide-2.active[data-step="1"] .success-scene {
+      animation: click-scene-out 420ms var(--ease-in-out) forwards;
+    }
+
+    body.interactive-mode .slide-2.active[data-step="1"] .success-grid .video-card {
+      opacity: 1;
+      transform: none;
+    }
+
+    body.interactive-mode .slide-2.active[data-step="1"] .failure-scene {
+      pointer-events: auto;
+      animation: click-scene-in 620ms var(--ease-out) 180ms forwards;
+    }
+
+    body.interactive-mode .slide-3.active .policy-bank,
+    body.interactive-mode .slide-3.active .runtime-flow,
+    body.interactive-mode .slide-3.active .learning-flow { opacity: 0; }
+
+    body.interactive-mode .slide-3.active[data-step="0"] .policy-bank { opacity: 1; }
+
+    body.interactive-mode .slide-3.active[data-step="0"] .bank-policy {
+      animation: click-card-in 650ms var(--ease-out) forwards;
+    }
+
+    body.interactive-mode .slide-3.active[data-step="0"] .bank-policy:nth-child(1) { animation-delay: 40ms; }
+    body.interactive-mode .slide-3.active[data-step="0"] .bank-policy:nth-child(2) { animation-delay: 150ms; }
+    body.interactive-mode .slide-3.active[data-step="0"] .bank-policy:nth-child(3) { animation-delay: 260ms; }
+    body.interactive-mode .slide-3.active[data-step="0"] .bank-policy:nth-child(4) { animation-delay: 370ms; }
+    body.interactive-mode .slide-3.active[data-step="0"] .bank-policy:nth-child(5) { animation-delay: 480ms; }
+
+    body.interactive-mode .slide-3.active[data-step="0"] .caption-policies,
+    body.interactive-mode .slide-3.active[data-step="1"] .caption-runtime,
+    body.interactive-mode .slide-3.active[data-step="2"] .caption-training,
+    body.interactive-mode .slide-3.active[data-step="3"] .caption-return {
+      animation: click-caption-in 450ms var(--ease-out) forwards;
+    }
+
+    body.interactive-mode .slide-3.active[data-step="1"] .policy-bank { opacity: 1; }
+
+    body.interactive-mode .slide-3.active[data-step="1"] .bank-policy {
+      opacity: 1;
+      transform: none;
+      animation: click-collect-policy 700ms var(--ease-in-out) forwards;
+    }
+
+    body.interactive-mode .slide-3.active[data-step="1"] .summit-core {
+      animation: click-core-in 620ms var(--ease-out) 430ms forwards;
+    }
+
+    body.interactive-mode .slide-3.active[data-step="1"] .core-policy-strip {
+      animation: click-fade-in 420ms var(--ease-out) 760ms forwards;
+    }
+
+    body.interactive-mode .slide-3.active[data-step="1"] .runtime-flow {
+      animation: click-scene-in 620ms var(--ease-out) 720ms forwards;
+    }
+
+    body.interactive-mode .slide-3.active[data-step="1"] .runtime-flow .flow-lines > path,
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .flow-lines > path,
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .flow-lines > path {
+      animation: route-flow 1.35s linear infinite;
+    }
+
+    body.interactive-mode .slide-3.active:is([data-step="2"], [data-step="3"]) .summit-core {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(0.72);
+    }
+
+    body.interactive-mode .slide-3.active:is([data-step="2"], [data-step="3"]) .core-policy-strip,
+    body.interactive-mode .slide-3.active:is([data-step="2"], [data-step="3"]) .learning-flow { opacity: 1; }
+
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .unknown-state,
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .loop-label,
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .loop-time,
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .request-label,
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .server-node,
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .request-path,
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .training-path,
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .training-sim-grid {
+      animation: click-scene-in 600ms var(--ease-out) forwards;
+    }
+
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .loop-label,
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .loop-time {
+      animation-name: click-centered-in;
+    }
+
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .flow-lines > path.request-path,
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .flow-lines > path.training-path {
+      animation: click-fade-in 600ms var(--ease-out) forwards, route-flow 1.35s linear infinite;
+    }
+
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .request-label,
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .request-path { animation-delay: 180ms; }
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .server-node { animation-delay: 330ms; }
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .training-path { animation-delay: 520ms; }
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .training-sim-grid { animation-delay: 680ms; }
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .loop-label,
+    body.interactive-mode .slide-3.active[data-step="2"] .learning-flow .loop-time { animation-delay: 820ms; }
+
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .unknown-state,
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .loop-label,
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .loop-time,
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .request-label,
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .server-node,
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .request-path,
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .training-path { opacity: 1; }
+
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .training-sim-grid {
+      opacity: 1;
+      transform: scale(0.72);
+    }
+
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .new-policy,
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .return-label,
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .return-path {
+      animation: click-scene-in 620ms var(--ease-out) forwards;
+    }
+
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .flow-lines > path.policy-path,
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .flow-lines > path.return-path {
+      animation: click-fade-in 620ms var(--ease-out) forwards, route-flow 1.35s linear infinite;
+    }
+
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .new-policy,
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .policy-path { animation-delay: 180ms; }
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .return-label,
+    body.interactive-mode .slide-3.active[data-step="3"] .learning-flow .return-path { animation-delay: 520ms; }
+
+    @keyframes click-card-in {
+      from { opacity: 0; transform: translateY(1rem) scale(0.97); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes click-scene-in {
+      from { opacity: 0; transform: translateY(0.8rem); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes click-scene-out {
+      from { opacity: 1; transform: translateY(0) scale(1); }
+      to { opacity: 0; transform: translateY(-2rem) scale(0.94); }
+    }
+
+    @keyframes click-caption-in {
+      from { opacity: 0; transform: translateY(0.45rem); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes click-centered-in {
+      from { opacity: 0; transform: translate(-50%, 0.8rem); }
+      to { opacity: 1; transform: translate(-50%, 0); }
+    }
+
+    @keyframes click-collect-policy {
+      from { opacity: 1; transform: translateY(0) scale(1); }
+      to { opacity: 0; transform: translate(var(--collect-x), 5.7rem) scale(0.22); }
+    }
+
+    @keyframes click-core-in {
+      from { opacity: 0; transform: translate(-50%, -50%) scale(0.86); }
+      to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+
+    @keyframes click-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
     @keyframes breathe {
       0%, 100% { opacity: 0.62; transform: scale(0.92); }
       50% { opacity: 1; transform: scale(1); }
+    }
+
+    @keyframes caption-policies {
+      0%, 4% { opacity: 0; transform: translateY(0.45rem); }
+      8%, 34% { opacity: 1; transform: translateY(0); }
+      39%, 100% { opacity: 0; transform: translateY(-0.35rem); }
+    }
+
+    @keyframes caption-runtime {
+      0%, 39% { opacity: 0; transform: translateY(0.45rem); }
+      44%, 64% { opacity: 1; transform: translateY(0); }
+      69%, 100% { opacity: 0; transform: translateY(-0.35rem); }
+    }
+
+    @keyframes caption-training {
+      0%, 69% { opacity: 0; transform: translateY(0.45rem); }
+      74%, 89% { opacity: 1; transform: translateY(0); }
+      94%, 100% { opacity: 0; transform: translateY(-0.35rem); }
+    }
+
+    @keyframes caption-return {
+      0%, 91% { opacity: 0; transform: translateY(0.45rem); }
+      96%, 100% { opacity: 1; transform: translateY(0); }
     }
 
     @keyframes route-flow {
@@ -1603,6 +1933,11 @@
       72%, 100% { opacity: 1; }
     }
 
+    @keyframes learn-loop-label {
+      0%, 69% { opacity: 0; transform: translate(-50%, 0.45rem); }
+      76%, 100% { opacity: 1; transform: translate(-50%, 0); }
+    }
+
     @keyframes learn-server {
       0%, 70% { opacity: 0; transform: translateX(0.8rem); }
       76%, 100% { opacity: 1; transform: translateX(0); }
@@ -1636,6 +1971,160 @@
     @keyframes learn-new-policy {
       0%, 88% { opacity: 0; transform: translateY(0.7rem) scale(0.96); }
       94%, 100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .demo-story {
+      position: relative;
+      min-height: 0;
+      padding-top: 2.2rem;
+    }
+
+    .demo-heading {
+      text-align: center;
+    }
+
+    .demo-heading .eyebrow {
+      margin-bottom: 0.7rem;
+    }
+
+    .demo-heading h2 {
+      margin: 0;
+      font-size: 3.45rem;
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+    }
+
+    .demo-heading h2 span { color: var(--ice); }
+
+    .demo-heading p {
+      margin: 0.65rem 0 0;
+      font-size: 1.55rem;
+      color: #bdd0d5;
+    }
+
+    .demo-condition-grid {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.1rem;
+      width: 72rem;
+      margin: 2.25rem auto 0;
+    }
+
+    .demo-condition {
+      position: relative;
+      min-height: 9.2rem;
+      display: grid;
+      grid-template-columns: 5.3rem 1fr;
+      align-items: center;
+      gap: 1.15rem;
+      padding: 1.25rem 1.45rem;
+      overflow: hidden;
+      border: 1px solid rgba(158, 232, 242, 0.2);
+      border-radius: 0.9rem;
+      background: linear-gradient(145deg, rgba(15, 42, 49, 0.96), rgba(7, 24, 29, 0.96));
+      box-shadow: 0 1rem 2.4rem rgba(0, 0, 0, 0.24);
+      opacity: 0;
+      transform: translateY(1rem) scale(0.97);
+    }
+
+    .slide-4.active .demo-condition { animation: demo-card-in 8s var(--ease-out) forwards; }
+    .slide-4.active .demo-condition:nth-child(1) { animation-delay: 0.25s; }
+    .slide-4.active .demo-condition:nth-child(2) { animation-delay: 0.65s; }
+    .slide-4.active .demo-condition:nth-child(3) { animation-delay: 1.05s; }
+    .slide-4.active .demo-condition:nth-child(4) { animation-delay: 1.45s; }
+
+    .demo-condition::after {
+      content: "RANDOMIZED";
+      position: absolute;
+      right: 1rem;
+      top: 0.85rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.62rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      color: var(--signal);
+    }
+
+    .condition-visual {
+      position: relative;
+      width: 5.3rem;
+      height: 5.3rem;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(158, 232, 242, 0.27);
+      border-radius: 50%;
+      background: rgba(6, 19, 23, 0.75);
+      color: var(--ice);
+      font-size: 2.2rem;
+      box-shadow: inset 0 0 1.5rem rgba(79, 193, 213, 0.08);
+    }
+
+    .condition-visual.wind { animation: demo-wind 2.2s var(--ease-in-out) infinite alternate; }
+    .condition-visual.terrain { animation: demo-terrain 2.5s var(--ease-in-out) infinite alternate; }
+    .condition-visual.slope { animation: demo-slope 2.6s var(--ease-in-out) infinite alternate; }
+    .condition-visual.friction { animation: demo-friction 1.8s steps(2, end) infinite alternate; }
+
+    .condition-copy h3 {
+      margin: 0;
+      font-size: 1.55rem;
+      line-height: 1.1;
+    }
+
+    .condition-copy p {
+      margin: 0.48rem 0 0;
+      max-width: 25rem;
+      font-size: 1.05rem;
+      line-height: 1.3;
+      color: var(--muted);
+    }
+
+    .demo-randomizer {
+      width: fit-content;
+      margin: 1.25rem auto 0;
+      padding: 0.5rem 1rem;
+      border: 1px solid rgba(242, 188, 109, 0.3);
+      border-radius: 999px;
+      background: rgba(44, 34, 19, 0.72);
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 0.82rem;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #ffd99f;
+      opacity: 0;
+    }
+
+    .slide-4.active .demo-randomizer { animation: demo-label-in 8s var(--ease-out) 2.1s forwards; }
+
+    @keyframes demo-card-in {
+      0%, 5% { opacity: 0; transform: translateY(1rem) scale(0.97); }
+      14%, 100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes demo-label-in {
+      0%, 5% { opacity: 0; transform: translateY(0.5rem); }
+      14%, 100% { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes demo-wind {
+      from { transform: translateX(-0.18rem) rotate(-4deg); }
+      to { transform: translateX(0.22rem) rotate(4deg); }
+    }
+
+    @keyframes demo-terrain {
+      from { transform: translateY(0.16rem); }
+      to { transform: translateY(-0.16rem); }
+    }
+
+    @keyframes demo-slope {
+      from { transform: rotate(-9deg); }
+      to { transform: rotate(9deg); }
+    }
+
+    @keyframes demo-friction {
+      from { color: var(--ice); border-color: rgba(158, 232, 242, 0.27); }
+      to { color: var(--signal); border-color: rgba(242, 188, 109, 0.5); }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -1772,7 +2261,7 @@
 
       <footer class="footer">
         <span class="footer-title">SummitOS</span>
-        <span class="slide-index"><strong>01</strong> / 03</span>
+        <span class="slide-index"><strong>01</strong> / 04</span>
       </footer>
     </section>
 
@@ -1846,7 +2335,7 @@
 
       <footer class="footer">
         <span class="footer-title">Specialists succeed inside their training conditions</span>
-        <span class="slide-index"><strong>02</strong> / 03</span>
+        <span class="slide-index"><strong>02</strong> / 04</span>
       </footer>
     </section>
 
@@ -1859,7 +2348,12 @@
       <div class="os-story">
         <div class="os-heading">
           <h2 id="slide-3-title"><span>SummitOS:</span> Dynamic mixture of locomotion policies</h2>
-          <p>Sense the environment. Select the right specialist.</p>
+          <p class="stage-caption" aria-live="polite">
+            <span class="caption-policies">Multiple simulation-trained policies, dynamically selected.</span>
+            <span class="caption-runtime">Live conditions select the best policy.</span>
+            <span class="caption-training">Missing policy triggers parallel RL training.</span>
+            <span class="caption-return">New policy returns to SummitOS.</span>
+          </p>
         </div>
 
         <div class="policy-bank" aria-label="Five individual locomotion policies">
@@ -1914,7 +2408,9 @@
         </div>
 
         <div class="learning-flow" aria-label="Unknown-condition training loop">
-          <div class="flow-node unknown-state"><b>Policy not present</b><small>Unknown environment detected</small></div>
+          <div class="flow-node unknown-state"><b>If a policy is not present...</b><small>Send conditions for RL training</small></div>
+          <span class="loop-label">Self-learning loop</span>
+          <span class="loop-time">30 mins per new policy</span>
           <div class="server-node flow-node"><span class="server-icon">▦</span><b>Policy server</b><small>Launch parallel simulation</small></div>
           <div class="training-sim-grid" aria-label="Twelve robots training in parallel">
             <video muted loop playsinline preload="metadata"><source src="assets/presentation/rough-terrain-policy.mp4" type="video/mp4"></video>
@@ -1943,10 +2439,10 @@
               <marker id="arrow-request" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5 0 10Z" fill="#f2bc6d"/></marker>
               <marker id="arrow-safe-learning" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5 0 10Z" fill="#82d6a8"/></marker>
             </defs>
-            <path class="request-path" d="M444 78Q650 68 802 126" marker-end="url(#arrow-request)"/>
-            <path class="training-path" d="M802 126Q700 205 444 220" marker-end="url(#arrow-request)"/>
-            <path class="policy-path" d="M444 220Q188 205 85 126" marker-end="url(#arrow-safe-learning)"/>
-            <path class="return-path" d="M85 126Q238 68 444 78" marker-end="url(#arrow-safe-learning)"/>
+            <path class="request-path" d="M444 78Q650 72 802 147" marker-end="url(#arrow-request)"/>
+            <path class="training-path" d="M802 147Q700 247 444 262" marker-end="url(#arrow-request)"/>
+            <path class="policy-path" d="M444 262Q188 247 85 147" marker-end="url(#arrow-safe-learning)"/>
+            <path class="return-path" d="M85 147Q238 72 444 78" marker-end="url(#arrow-safe-learning)"/>
           </svg>
         </div>
 
@@ -1954,18 +2450,72 @@
 
       <footer class="footer">
         <span class="footer-title">Select, deploy, learn, expand</span>
-        <span class="slide-index"><strong>03</strong> / 03</span>
+        <span class="slide-index"><strong>03</strong> / 04</span>
       </footer>
     </section>
+
+    <section class="slide slide-4" aria-labelledby="slide-4-title">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark" aria-hidden="true">S</span> SummitOS</div>
+        <div class="section-label">Live demo</div>
+      </header>
+
+      <div class="demo-story">
+        <div class="demo-heading">
+          <p class="eyebrow">We evaluate our system on</p>
+          <h2 id="slide-4-title"><span>Randomly changing</span> environments</h2>
+          <p>Every condition can change during the demo.</p>
+        </div>
+
+        <div class="demo-condition-grid">
+          <article class="demo-condition">
+            <div class="condition-visual slope" aria-hidden="true">◿</div>
+            <div class="condition-copy"><h3>Low-friction slopes</h3><p>Sloped obstacles arrive with reduced traction.</p></div>
+          </article>
+          <article class="demo-condition">
+            <div class="condition-visual friction" aria-hidden="true">μ↕</div>
+            <div class="condition-copy"><h3>Friction and incline</h3><p>Surface friction and slope angle change randomly.</p></div>
+          </article>
+          <article class="demo-condition">
+            <div class="condition-visual terrain" aria-hidden="true">⌁</div>
+            <div class="condition-copy"><h3>Rough terrain</h3><p>Uneven terrain appears unexpectedly along the route.</p></div>
+          </article>
+          <article class="demo-condition">
+            <div class="condition-visual wind" aria-hidden="true">➜</div>
+            <div class="condition-copy"><h3>Directional wind</h3><p>Wind arrives randomly from changing directions.</p></div>
+          </article>
+        </div>
+
+        <div class="demo-randomizer">Conditions randomized continuously</div>
+      </div>
+
+      <footer class="footer">
+        <span class="footer-title">One run. Continuously changing conditions.</span>
+        <span class="slide-index"><strong>04</strong> / 04</span>
+      </footer>
+    </section>
+
+    <nav class="deck-controls" aria-label="Presentation controls">
+      <button class="deck-control deck-previous" type="button" aria-label="Previous step">←</button>
+      <button class="deck-control deck-next" type="button" aria-label="Next step">→</button>
+    </nav>
   </main>
   <script>
     const slides = Array.from(document.querySelectorAll('.slide'));
+    const previousButton = document.querySelector('.deck-previous');
+    const nextButton = document.querySelector('.deck-next');
+    const maxSteps = [0, 1, 3, 0];
     let currentSlide = 0;
-    document.body.classList.toggle('preview-failure', new URLSearchParams(location.search).get('stage') === 'failure');
-    document.body.classList.toggle('preview-learning', new URLSearchParams(location.search).get('stage') === 'learning');
-    document.body.classList.toggle('preview-bank', new URLSearchParams(location.search).get('stage') === 'bank');
-    document.body.classList.toggle('preview-runtime', new URLSearchParams(location.search).get('stage') === 'runtime');
-    document.body.classList.toggle('preview-simulation', new URLSearchParams(location.search).get('stage') === 'simulation');
+    let currentStep = 0;
+    const searchParams = new URLSearchParams(location.search);
+    const previewStage = searchParams.get('stage');
+    const captureMode = searchParams.get('capture') === '1';
+    document.body.classList.toggle('preview-failure', previewStage === 'failure');
+    document.body.classList.toggle('preview-learning', previewStage === 'learning');
+    document.body.classList.toggle('preview-bank', previewStage === 'bank');
+    document.body.classList.toggle('preview-runtime', previewStage === 'runtime');
+    document.body.classList.toggle('preview-simulation', previewStage === 'simulation');
+    document.body.classList.toggle('interactive-mode', !previewStage && !captureMode);
 
     function playVisibleVideos() {
       slides.forEach((slide, index) => {
@@ -1980,11 +2530,43 @@
       });
     }
 
-    function showSlide(index) {
+    function updateControls() {
+      previousButton.disabled = currentSlide === 0 && currentStep === 0;
+      nextButton.disabled = currentSlide === slides.length - 1 && currentStep === maxSteps[currentSlide];
+      nextButton.setAttribute('aria-label', currentStep < maxSteps[currentSlide] ? 'Next animation' : 'Next slide');
+    }
+
+    function setStep(step) {
+      currentStep = Math.max(0, Math.min(step, maxSteps[currentSlide]));
+      slides[currentSlide].dataset.step = String(currentStep);
+      playVisibleVideos();
+      updateControls();
+    }
+
+    function showSlide(index, step = 0) {
       currentSlide = Math.max(0, Math.min(index, slides.length - 1));
+      currentStep = Math.max(0, Math.min(step, maxSteps[currentSlide]));
+      slides[currentSlide].dataset.step = String(currentStep);
       slides.forEach((slide, slideIndex) => slide.classList.toggle('active', slideIndex === currentSlide));
       history.replaceState(null, '', `#${currentSlide + 1}`);
       playVisibleVideos();
+      updateControls();
+    }
+
+    function advance() {
+      if (currentStep < maxSteps[currentSlide]) {
+        setStep(currentStep + 1);
+      } else if (currentSlide < slides.length - 1) {
+        showSlide(currentSlide + 1);
+      }
+    }
+
+    function retreat() {
+      if (currentStep > 0) {
+        setStep(currentStep - 1);
+      } else if (currentSlide > 0) {
+        showSlide(currentSlide - 1, maxSteps[currentSlide - 1]);
+      }
     }
 
     function replaySlide() {
@@ -1995,20 +2577,55 @@
       playVisibleVideos();
     }
 
+    function startCapturePlayback() {
+      document.body.classList.remove('interactive-mode');
+      slides.forEach((slide) => slide.removeAttribute('data-step'));
+      const slideDuration = 7500;
+      const animationRates = [2.2, 2.6, 4.2, 1.35];
+
+      const accelerateCurrentSlide = () => {
+        requestAnimationFrame(() => {
+          slides[currentSlide].getAnimations({ subtree: true }).forEach((animation) => {
+            animation.playbackRate = animationRates[currentSlide];
+          });
+        });
+      };
+
+      showSlide(0);
+      accelerateCurrentSlide();
+
+      let nextSlide = 1;
+      const timer = window.setInterval(() => {
+        if (nextSlide >= slides.length) {
+          window.clearInterval(timer);
+          return;
+        }
+        showSlide(nextSlide);
+        accelerateCurrentSlide();
+        nextSlide += 1;
+      }, slideDuration);
+    }
+
     document.addEventListener('keydown', (event) => {
       if (event.key === 'ArrowRight' || event.key === 'PageDown' || event.key === ' ') {
         event.preventDefault();
-        showSlide(currentSlide + 1);
+        advance();
       } else if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
         event.preventDefault();
-        showSlide(currentSlide - 1);
+        retreat();
       } else if (event.key.toLowerCase() === 'r') {
         replaySlide();
       }
     });
 
+    previousButton.addEventListener('click', retreat);
+    nextButton.addEventListener('click', advance);
+
     const requestedSlide = Number.parseInt(location.hash.slice(1), 10) - 1;
     showSlide(Number.isFinite(requestedSlide) ? requestedSlide : 0);
+    if (captureMode) {
+      window.setTimeout(startCapturePlayback, 3000);
+    }
   </script>
 </body>
 </html>
