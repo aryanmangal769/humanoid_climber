@@ -88,6 +88,65 @@ The supervisor itself must be evaluated. Required tests include boundary
 sweeps, noisy context estimates, delayed estimates, rapid condition changes,
 failed recovery attempts, and conditions outside every policy envelope.
 
+### Required MuJoCo overlay
+
+The future mixture-of-policies wrapper must render its decisions directly over
+the MuJoCo/Viser simulation, not only write them to logs. The overlay should
+show enough information to explain every switch:
+
+- active policy and previous policy;
+- switch reason, confidence, safety margin, and cooldown state;
+- slope, terrain roughness, estimated friction/slip, and wind vector;
+- torso height/orientation, fall detector, and recovery state;
+- commanded and measured velocity;
+- each candidate policy's envelope result (`eligible`, `rejected`, or
+  `uncertain`);
+- a prominent `NO_SAFE_POLICY` warning and requested safe action;
+- scenario mode, scenario phase, simulation time, and random seed.
+
+The overlay is part of the system interface: screenshots and videos should be
+enough to audit what the router believed, why it selected a policy, and whether
+the actual robot response matched that decision.
+
+### Scenario generation
+
+The policy supervisor will be tested with two complementary kinds of continuous
+simulation:
+
+1. **Scripted scenarios:** slope, friction, wind, and roughness change according
+  to a known timeline. These runs are deterministic, repeatable, and suitable
+  for regression tests and synchronized comparison videos. Example phases are
+  flat/no-wind, increasing slope, low-friction incline, crosswind, forced fall,
+  recovery, and resumed locomotion.
+2. **Random scenarios:** the same variables can change at random times and to
+  random values within configured bounds. A seeded random generator must record
+  every sampled transition so a failure can be replayed exactly. Out-of-range
+  samples are intentionally allowed in robustness tests to verify that the
+  supervisor emits `NO_SAFE_POLICY` rather than silently selecting a controller.
+
+Training randomization and evaluation randomization must remain separate.
+Scripted runs establish comparable benchmarks; seeded random runs discover
+unexpected interactions and policy-boundary failures.
+
+### Persistent simulation after a fall
+
+The combined simulation must **not close or immediately reset when locomotion
+reports a fall**. A fall becomes a supervisor event rather than a terminal
+application event:
+
+1. Freeze or replace the locomotion command and classify the fallen pose.
+2. Keep MuJoCo, the viewer, telemetry, and scenario clock alive.
+3. Switch to a compatible recovery policy when one is validated.
+4. After uprightness is stable for a dwell period, return to an eligible
+  locomotion policy with action interpolation or another tested handoff.
+5. If recovery is unavailable, unsafe, or repeatedly fails, emit
+  `NO_SAFE_POLICY` and hold the simulation open for inspection/intervention.
+
+Individual PPO training environments may still terminate and reset episodes;
+that behavior is useful for learning. The no-close requirement applies to the
+top-level demonstration/evaluation wrapper, which must own episode lifecycle
+instead of allowing a specialist policy's fall termination to exit the app.
+
 ## Evaluate the stock walker on ice
 
 ```bash
@@ -197,6 +256,116 @@ tracking observations rather than the walker's 99 velocity observations. It is
 therefore trained from scratch with a separate normalizer and checkpoint. A
 local CPU smoke run completed one PPO iteration before the bounded cloud Job
 was launched. The private motion artifact and checkpoints remain outside Git.
+
+## Reproduction and operations runbook
+
+This section records how the current results and active training runs were
+produced. It intentionally contains no Hugging Face access token. Authenticate
+interactively or inject `HF_TOKEN` through the Jobs secret mechanism; never put
+its value in a command, script, commit, log, or README.
+
+### Local environment and tests
+
+```bash
+uv venv --python 3.12 .venv-rl
+UV_PROJECT_ENVIRONMENT=.venv-rl uv sync
+UV_PROJECT_ENVIRONMENT=.venv-rl uv run pytest -q
+```
+
+The validated suite currently contains 13 configuration tests. Training uses
+Linux/NVIDIA; macOS is used for editing, CPU smoke tests, evaluation, and Viser
+playback.
+
+### Checkpoints used so far
+
+- Stock velocity policy: `ckpt/g1_velocity_model_final.pt`, downloaded from the
+  public `robomotic/mjlab-policies` G1 velocity release.
+- Recovered incline policy: `ckpt/recovered/model_34400.pt`, produced by
+  fine-tuning the stock policy and kept outside Git.
+- Wind and recovery candidates: uploaded periodically by the active Jobs to a
+  private personal model repository and not committed to this repository.
+
+Play the stock policy in its original flat environment:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-rl uv run hum-climber-play \
+  Mjlab-Velocity-Flat-Unitree-G1 \
+  --checkpoint-file ./ckpt/g1_velocity_model_final.pt \
+  --num-envs 1 \
+  --viewer viser
+```
+
+The ice, incline-wind, and flat-wind playback commands are documented in the
+sections above.
+
+### Local recovery smoke test
+
+The private safe NPZ motion was generated from an already audited, converted
+HumanUP source NPZ:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-rl uv run python \
+  scripts/build_recovery_motion.py \
+  private_assets/recovery/humanup_getup_source.npz \
+  private_assets/recovery/g1_humanup_getup_50hz.npz
+```
+
+The native task was then tested with two CPU environments and one PPO update:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-rl uv run hum-climber-train \
+  HumClimber-Tracking-Recovery-Unitree-G1 \
+  --gpu-ids None \
+  --log-root /tmp/hc-recovery-smoke \
+  --env.scene.num-envs 2 \
+  --agent.max-iterations 1 \
+  --agent.num-steps-per-env 4 \
+  --agent.save-interval 1 \
+  --agent.run-name smoke \
+  --agent.logger tensorboard \
+  --agent.upload-model False
+```
+
+### Privacy-minimized cloud training
+
+The cloud workflow used for wind and recovery is:
+
+1. Package only required project files and ignored private motion/checkpoint
+   inputs into a temporary archive.
+2. Inspect the archive contents before upload.
+3. Upload it to a verified-private repository in the personal namespace.
+4. Launch under the organization billing namespace with no mounted volume.
+5. Pass only the secret name `HF_TOKEN`; the secret value is never shown.
+6. Download and extract the private archive inside the ephemeral Job container.
+7. Run `scripts/hf_train_wind.sh` or `scripts/hf_train_recovery.sh`.
+8. Upload checkpoints every ten minutes and on normal or termination handling.
+9. Remove the temporary local archive and track only sanitized Job metadata.
+
+The launch shape is shown below with private identifiers represented by
+placeholders:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-rl uv run --with huggingface_hub hf jobs run \
+  --detach \
+  --namespace <billing-organization> \
+  --name hc-train-YYYYMMDD-HHMM \
+  --flavor a10g-small \
+  --timeout 8h \
+  --secrets HF_TOKEN \
+  -- ghcr.io/astral-sh/uv:python3.12-bookworm-slim \
+  sh -lc 'download-and-extract-private-source; exec sh <training-wrapper>'
+```
+
+No `--volume` argument is used. Organization administrators can still audit
+Job metadata, billing, command, and potentially logs; this workflow minimizes
+source/checkpoint exposure but does not make organization Jobs anonymous.
+
+The wind run uses 1,024 environments, starts from the stock velocity checkpoint,
+and calls `scripts/hf_train_wind.sh`. The recovery run uses 1,024 environments,
+starts its tracking network from scratch, and calls
+`scripts/hf_train_recovery.sh`. Both use A10G hardware, an eight-hour hard
+timeout, private periodic checkpoint uploads, and project-local sanitized
+tracking under the ignored `logs/` directory.
 
 ## Planned rough-terrain specialist
 
