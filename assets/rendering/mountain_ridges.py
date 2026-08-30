@@ -62,7 +62,6 @@ def _add_horizon_range(
   *,
   name: str,
   x_start: float,
-  depth_sign: float,
   height_scale: float,
   phase: float,
   rgba: tuple[float, float, float, float],
@@ -84,7 +83,7 @@ def _add_horizon_range(
         * layer_scale
         * math.sin(0.31 * y + layer * 1.13 + phase)
       )
-      vertices.extend((depth_sign * x_offset, y, max(0.0, z)))
+      vertices.extend((x_offset, y, max(0.0, z)))
 
   faces: list[int] = []
   for layer in range(len(MOUNTAIN_DEPTH_OFFSETS_M) - 1):
@@ -95,10 +94,7 @@ def _add_horizon_range(
       b = a + 1
       c = row1 + sample
       d = c + 1
-      if depth_sign > 0.0:
-        faces.extend((a, c, b, b, c, d))
-      else:
-        faces.extend((a, b, c, b, d, c))
+      faces.extend((a, c, b, b, c, d))
 
   mesh_name = f"{name}_mesh"
   spec.add_mesh(name=mesh_name, uservert=vertices, userface=faces)
@@ -110,7 +106,7 @@ def _add_horizon_range(
     rgba=rgba,
     contype=0,
     conaffinity=0,
-    group=2,
+    group=1,
   )
 
 
@@ -181,7 +177,7 @@ def _add_side_range(
     rgba=rgba,
     contype=0,
     conaffinity=0,
-    group=2,
+    group=1,
   )
 
 
@@ -191,7 +187,7 @@ def add_mountain_enclosure(
   centerline_y: Callable[[float], float] | None = None,
   range_specs: Sequence[tuple[float, float, float]] = MOUNTAIN_RANGE_SPECS,
 ) -> None:
-  """Add front/rear horizon ridges plus matching visual-only side ridges.
+  """Add two horizon ridges plus matching left/right visual-only ridges.
 
   ``centerline_y`` can be supplied for a winding route.  When omitted, side
   mountains follow a straight Y=0 corridor.
@@ -209,16 +205,14 @@ def add_mountain_enclosure(
       0.38 + 0.05 * index,
       1.0,
     )
-    for end_name, depth_sign in (("front", 1.0), ("rear", -1.0)):
-      _add_horizon_range(
-        spec,
-        name=f"mountain_range_{end_name}_{index:02d}",
-        x_start=depth_sign * x_start,
-        depth_sign=depth_sign,
-        height_scale=height_scale,
-        phase=phase,
-        rgba=color,
-      )
+    _add_horizon_range(
+      spec,
+      name=f"mountain_range_{index:02d}",
+      x_start=x_start,
+      height_scale=height_scale,
+      phase=phase,
+      rgba=color,
+    )
     for side_name, side_sign in (("left", -1.0), ("right", 1.0)):
       _add_side_range(
         spec,

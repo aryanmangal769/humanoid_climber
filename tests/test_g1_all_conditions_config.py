@@ -60,8 +60,8 @@ from humanoid_climber.tasks.g1_all_conditions import (
   FUTURE_SNOW_EVENT_COLOR,
   HIDDEN_TRAIL_RGBA,
   MOUNTAIN_COUNT,
-  MOUNTAIN_RIDGE_GEOM_NAMES,
-  SNOW_SURFACE_TILE,
+  MOUNTAIN_LATERAL_BANDS_M,
+  MOUNTAIN_STATION_X_M,
   WINTER_GROUND_BASE_COLOR,
   WINTER_GROUND_MATERIAL_NAME,
   WINTER_GROUND_TEXTURE_NAME,
@@ -458,17 +458,19 @@ def test_treadmill_play_mode_uses_one_long_flat_strip() -> None:
   assert TREADMILL_ROUGH_COLS == 80
   assert TREADMILL_ROUGH_MOUND_COUNT == 480
   assert TREADMILL_ROCK_COUNT == 128
-  assert SNOW_SURFACE_TILE.is_file()
-  assert MOUNTAIN_COUNT == 8
-  assert any("front" in name for name in MOUNTAIN_RIDGE_GEOM_NAMES)
-  assert any("rear" in name for name in MOUNTAIN_RIDGE_GEOM_NAMES)
-  for name in MOUNTAIN_RIDGE_GEOM_NAMES:
-    geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
-    assert geom_id >= 0
-    assert model.geom_type[geom_id] == mujoco.mjtGeom.mjGEOM_MESH
-    assert model.geom_contype[geom_id] == 0
-    assert model.geom_conaffinity[geom_id] == 0
-    assert model.geom_group[geom_id] == 2
+  assert MOUNTAIN_COUNT == 62
+  assert MOUNTAIN_LATERAL_BANDS_M == (24.0, 38.0)
+  assert MOUNTAIN_STATION_X_M[0] == -240.0
+  assert MOUNTAIN_STATION_X_M[-1] == 240.0
+  for index in range(MOUNTAIN_COUNT):
+    for prefix in ("alpine_mountain", "alpine_snowcap"):
+      geom_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_GEOM, f"{prefix}_{index:02d}"
+      )
+      assert geom_id >= 0
+      assert model.geom_contype[geom_id] == 0
+      assert model.geom_conaffinity[geom_id] == 0
+      assert model.geom_group[geom_id] == 2
   rough_body_id = mujoco.mj_name2id(
     model, mujoco.mjtObj.mjOBJ_BODY, "treadmill_rough_patch_body"
   )
