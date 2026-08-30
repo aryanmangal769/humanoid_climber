@@ -1,10 +1,4 @@
-"""Standalone procedural MuJoCo mountain-ridge generator.
-
-This is the visual-only ridge code used by the Humanoid Climber dashboard
-prototype.  It intentionally has no dependency on the task configuration so it
-can be copied or imported independently.  All generated mountain geoms have
-collision disabled.
-"""
+"""Packaged procedural MuJoCo mountain-ridge generator."""
 
 from __future__ import annotations
 
@@ -78,11 +72,8 @@ def _add_horizon_range(
       y_warp = 2.8 * math.sin(0.071 * y + phase + layer * 0.61)
       z = _mountain_height(y + y_warp, height_scale=height_scale, phase=phase)
       z *= layer_scale
-      z += (
-        1.1
-        * height_scale
-        * layer_scale
-        * math.sin(0.31 * y + layer * 1.13 + phase)
+      z += 1.1 * height_scale * layer_scale * math.sin(
+        0.31 * y + layer * 1.13 + phase
       )
       vertices.extend((depth_sign * x_offset, y, max(0.0, z)))
 
@@ -138,19 +129,14 @@ def _add_side_range(
       t = sample / (longitudinal_samples - 1)
       x = x_min + t * (x_max - x_min)
       profile_coord = corner_profile_coord + (x - corner_x)
-      coord_warp = 2.8 * math.sin(
-        0.071 * profile_coord + phase + layer * 0.61
-      )
+      coord_warp = 2.8 * math.sin(0.071 * profile_coord + phase + layer * 0.61)
       z = _mountain_height(
         profile_coord + coord_warp,
         height_scale=height_scale,
         phase=phase,
       ) * layer_scale
-      z += (
-        1.1
-        * height_scale
-        * layer_scale
-        * math.sin(0.31 * profile_coord + layer * 1.13 + phase)
+      z += 1.1 * height_scale * layer_scale * math.sin(
+        0.31 * profile_coord + layer * 1.13 + phase
       )
       rear_t = max(0.0, min(1.0, (x - x_min) / 55.0))
       rear_smooth = rear_t * rear_t * (3.0 - 2.0 * rear_t)
@@ -191,11 +177,7 @@ def add_mountain_enclosure(
   centerline_y: Callable[[float], float] | None = None,
   range_specs: Sequence[tuple[float, float, float]] = MOUNTAIN_RANGE_SPECS,
 ) -> None:
-  """Add front/rear horizon ridges plus matching visual-only side ridges.
-
-  ``centerline_y`` can be supplied for a winding route.  When omitted, side
-  mountains follow a straight Y=0 corridor.
-  """
+  """Add front/rear horizon ridges plus matching visual-only side ridges."""
   if centerline_y is None:
     centerline_y = lambda _x: 0.0
 

@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 import math
+from pathlib import Path
 
 import mujoco
 
@@ -16,6 +17,10 @@ from mjlab.tasks.velocity.rl import VelocityOnPolicyRunner
 from mjlab.terrains import BoxFlatTerrainCfg, TerrainGeneratorCfg
 from mjlab.utils import spec_config as spec_cfg
 
+from humanoid_climber.mountain_ridges import (
+  MOUNTAIN_RANGE_SPECS,
+  add_mountain_enclosure,
+)
 from humanoid_climber import mdp as climber_mdp
 from humanoid_climber.orchestrator import (
   HIGH_WIND_FORCE_RANGES,
@@ -90,14 +95,19 @@ TREADMILL_ROUGH_ROWS = 6
 TREADMILL_ROUGH_COLS = 80
 TREADMILL_ROUGH_MOUND_COUNT = TREADMILL_ROUGH_ROWS * TREADMILL_ROUGH_COLS
 TREADMILL_ROCK_COUNT = 128
-MOUNTAIN_STATION_X_M = tuple(float(x) for x in range(-240, 241, 40))
-MOUNTAIN_LATERAL_BANDS_M = (24.0, 38.0)
-MOUNTAIN_END_X_M = (-270.0, 270.0)
-MOUNTAIN_END_Y_M = (-48.0, -24.0, 0.0, 24.0, 48.0)
-MOUNTAIN_COUNT = (
-  len(MOUNTAIN_STATION_X_M) * len(MOUNTAIN_LATERAL_BANDS_M) * 2
-  + len(MOUNTAIN_END_X_M) * len(MOUNTAIN_END_Y_M)
+MOUNTAIN_RIDGE_GEOM_NAMES = tuple(
+  name
+  for index in range(len(MOUNTAIN_RANGE_SPECS))
+  for name in (
+    f"mountain_range_front_{index:02d}",
+    f"mountain_range_rear_{index:02d}",
+    f"mountain_side_left_{index:02d}",
+    f"mountain_side_right_{index:02d}",
+  )
 )
+MOUNTAIN_COUNT = len(MOUNTAIN_RIDGE_GEOM_NAMES)
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+SNOW_SURFACE_TILE = PROJECT_ROOT / "assets" / "textures" / "snow_surface_tile.png"
 # Neutral ground is cool mineral frost rather than fresh snow. A future snow
 # event can therefore use the brighter reserved color and remain unambiguous.
 WINTER_GROUND_BASE_COLOR = (0.48, 0.55, 0.60)
@@ -167,21 +177,13 @@ def _make_treadmill_dynamic(cfg: ManagerBasedRlEnvCfg) -> None:
   terrain_cfg = cfg.scene.terrain
   if terrain_cfg is None:
     raise ValueError("The treadmill terrain configuration is missing.")
-  # A fine, low-contrast procedural fleck covers the complete substrate. This
-  # gives on-route and off-route ground one continuous winter-alpine surface
-  # without using an image asset or visually revealing the steering route.
+  # Tile the branch-provided snow surface across the complete substrate without
+  # visually revealing the steering route.
   terrain_cfg.textures = (
     spec_cfg.TextureCfg(
       name=WINTER_GROUND_TEXTURE_NAME,
       type="2d",
-      builtin="flat",
-      rgb1=WINTER_GROUND_BASE_COLOR,
-      rgb2=WINTER_GROUND_BASE_COLOR,
-      mark="random",
-      markrgb=WINTER_GROUND_FLECK_COLOR,
-      random=0.075,
-      width=256,
-      height=256,
+      file=str(SNOW_SURFACE_TILE),
     ),
   )
   terrain_cfg.materials = (
@@ -189,7 +191,7 @@ def _make_treadmill_dynamic(cfg: ManagerBasedRlEnvCfg) -> None:
       name=WINTER_GROUND_MATERIAL_NAME,
       texture=WINTER_GROUND_TEXTURE_NAME,
       texuniform=True,
-      texrepeat=(3.0, 3.0),
+      texrepeat=(24.0, 12.0),
       reflectance=0.08,
       geom_names_expr=(r"terrain_0$",),
     ),
@@ -362,59 +364,9 @@ def _make_treadmill_dynamic(cfg: ManagerBasedRlEnvCfg) -> None:
         group=1,
       )
 
-    # Layered, visual-only alpine ridges frame the route without adding any
-    # contacts or affecting terrain probes. Large ellipsoids are partially
-    # buried so only their upper profiles read as distant mountain masses.
-    side_mountain_peaks = tuple(
-      (
-        x + (20.0 * band) + (side * 7.0 if station % 2 else 0.0),
-        side
-        * (
-          lateral_band
-          + 2.0 * ((station + band + (1 if side > 0 else 0)) % 3)
-        ),
-        28.0 + 3.0 * ((station * 2 + band + (1 if side > 0 else 0)) % 4),
-        10.0 + 1.5 * ((station + band + (1 if side < 0 else 0)) % 4),
-        17.0 + 2.0 * ((station * 3 + band + (1 if side > 0 else 0)) % 5),
-      )
-      for station, x in enumerate(MOUNTAIN_STATION_X_M)
-      for band, lateral_band in enumerate(MOUNTAIN_LATERAL_BANDS_M)
-      for side in (-1, 1)
-    )
-    end_mountain_peaks = tuple(
-      (
-        x + (6.0 if (end + lateral) % 2 else -6.0),
-        y + (5.0 if lateral % 2 else -5.0),
-        13.0 + 2.0 * ((end + lateral) % 3),
-        25.0 + 3.0 * ((end * 2 + lateral) % 4),
-        19.0 + 2.0 * ((end + lateral * 2) % 4),
-      )
-      for end, x in enumerate(MOUNTAIN_END_X_M)
-      for lateral, y in enumerate(MOUNTAIN_END_Y_M)
-    )
-    mountain_peaks = side_mountain_peaks + end_mountain_peaks
-    for index, (x, y, radius_x, radius_y, radius_z) in enumerate(mountain_peaks):
-      shade = 0.24 + 0.018 * (index % 3)
-      spec.worldbody.add_geom(
-        name=f"alpine_mountain_{index:02d}",
-        type=mujoco.mjtGeom.mjGEOM_ELLIPSOID,
-        size=(radius_x, radius_y, radius_z),
-        pos=(x, y, -2.5),
-        rgba=(shade, shade + 0.035, shade + 0.075, 1.0),
-        contype=0,
-        conaffinity=0,
-        group=2,
-      )
-      spec.worldbody.add_geom(
-        name=f"alpine_snowcap_{index:02d}",
-        type=mujoco.mjtGeom.mjGEOM_ELLIPSOID,
-        size=(radius_x * 0.42, radius_y * 0.44, radius_z * 0.24),
-        pos=(x, y, radius_z * 0.70),
-        rgba=(0.83, 0.89, 0.94, 0.96),
-        contype=0,
-        conaffinity=0,
-        group=2,
-      )
+    # Procedural mesh ridges from the snow/mountain asset branch enclose both
+    # sides and both longitudinal ends without affecting physics or probes.
+    add_mountain_enclosure(spec)
 
   cfg.scene.spec_fn = configure_treadmill
 
