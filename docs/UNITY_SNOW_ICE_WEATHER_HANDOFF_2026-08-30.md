@@ -383,8 +383,8 @@ Interactive streaming was also profiled against the live RTX 4090 backend:
 the old default MPM window advanced only about 0.13--0.21 simulated seconds
 per wall-clock second and command acknowledgements waited behind the solver.
 The default interactive window is now 1.25 m / 0.20 m voxel / 24 target cells,
-Newton couples at an operator-adjustable 5--30 Hz (5 Hz interactive default), and the interactive implicit iteration
-budget is 12 CUDA (8 CPU). Command and pause controls update immediately without waiting
+Newton couples at an operator-adjustable 2--30 Hz (3 Hz interactive default), and the interactive implicit iteration
+budget is 6 CUDA (5 CPU). Command and pause controls update immediately without waiting
 for a long MPM critical section; the renderer still receives backend-authored
 poses/deformation and operators can expand/refine the window for fidelity
 tests.
