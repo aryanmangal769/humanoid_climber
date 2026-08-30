@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,height=device-height,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#07111a">
+  <title>{{{ PRODUCT_NAME }}}</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #07111a; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    #unity-container { position: fixed; inset: 0; width: 100vw; height: 100vh; background: #07111a; }
+    #unity-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; background: #07111a; outline: none; }
+    #loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+               background: radial-gradient(circle at 50% 35%, #173449 0%, #0b1c29 42%, #07111a 100%); }
+    #loading-card { width: min(340px, calc(100vw - 48px)); color: #eaf6ff; text-align: center; }
+    #loading-title { font-size: 15px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+    #loading-sub { margin-top: 8px; font-size: 12px; color: rgba(225,241,252,.62); }
+    #track { height: 3px; margin-top: 18px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.12); }
+    #bar { width: 0%; height: 100%; border-radius: inherit; background: #a9dcff; transition: width 120ms linear; }
+    #warning { position: absolute; left: 16px; right: 16px; top: 16px; z-index: 5; color: white; font-size: 13px; }
+    #warning > div { max-width: 720px; margin: 0 auto 8px; padding: 10px 14px; border-radius: 10px;
+                     background: rgba(8,17,25,.88); backdrop-filter: blur(12px); }
+  </style>
+</head>
+<body>
+  <div id="unity-container">
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+    <div id="warning"></div>
+    <div id="loading">
+      <div id="loading-card">
+        <div id="loading-title">Everest Dream</div>
+        <div id="loading-sub">Loading MuJoCo + Newton renderer</div>
+        <div id="track"><div id="bar"></div></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const canvas = document.getElementById("unity-canvas");
+    const loading = document.getElementById("loading");
+    const bar = document.getElementById("bar");
+    const warning = document.getElementById("warning");
+
+    function showBanner(msg, type) {
+      const div = document.createElement("div");
+      div.textContent = msg;
+      if (type === "error") div.style.border = "1px solid rgba(255,92,92,.8)";
+      else if (type === "warning") div.style.border = "1px solid rgba(255,205,92,.65)";
+      warning.appendChild(div);
+      if (type !== "error") setTimeout(() => div.remove(), 5000);
+    }
+
+    const buildUrl = "Build";
+    const config = {
+      dataUrl: buildUrl + "/{{{ DATA_FILENAME }}}",
+      frameworkUrl: buildUrl + "/{{{ FRAMEWORK_FILENAME }}}",
+      codeUrl: buildUrl + "/{{{ CODE_FILENAME }}}",
+#if MEMORY_FILENAME
+      memoryUrl: buildUrl + "/{{{ MEMORY_FILENAME }}}",
+#endif
+#if SYMBOLS_FILENAME
+      symbolsUrl: buildUrl + "/{{{ SYMBOLS_FILENAME }}}",
+#endif
+      streamingAssetsUrl: "StreamingAssets",
+      companyName: "{{{ COMPANY_NAME }}}",
+      productName: "{{{ PRODUCT_NAME }}}",
+      productVersion: "{{{ PRODUCT_VERSION }}}",
+      showBanner
+    };
+
+    const script = document.createElement("script");
+    script.src = buildUrl + "/{{{ LOADER_FILENAME }}}";
+    script.onload = () => {
+      createUnityInstance(canvas, config, progress => {
+        bar.style.width = `${Math.round(progress * 100)}%`;
+      }).then(instance => {
+        loading.style.display = "none";
+        window.everestUnity = instance;
+      }).catch(message => {
+        loading.style.display = "none";
+        showBanner(String(message), "error");
+      });
+    };
+    document.body.appendChild(script);
+  </script>
+</body>
+</html>

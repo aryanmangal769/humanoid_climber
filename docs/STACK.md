@@ -7,8 +7,7 @@ for coupled material simulation such as granular/deformable snow.
 
 - `unitreerobotics/unitree_rl_mjlab` at `1425b15f73bd4095f0df53709d7c389c3eb9e790`
 - `newton-physics/newton` at `v1.0.0` / `d6046f187f1f6c6b8f8da98c5d0f93b8944eb5f0`
-- `google-deepmind/mujoco_playground` at `8a4b4642d8eba8a80ac99ed125cb62c16e1457ad`; it owns the dashboard's Menagerie dependency
-- `google-deepmind/mujoco_menagerie` at `1b86ece576591213e2b666ebf59508454200ca97` (pinned and fetched by Playground)
+- `google-deepmind/mujoco_playground` at `8a4b4642d8eba8a80ac99ed125cb62c16e1457ad` for research environments and prototypes
 
 The Unitree stack provides the canonical G1 tasks and RSL-RL/PPO training path.
 Newton v1.0.0 was chosen deliberately because it is on the same MuJoCo 3.5
@@ -55,7 +54,10 @@ Collada meshes, so the bootstrap also installs `usd-core` and `pycollada`.
 
 ```bash
 ./scripts/setup-rl-stack.sh
+./scripts/setup-playground.sh
 ./scripts/verify-rl-stack.sh
+./scripts/verify-newton-mujoco.sh
+.venv-rl/bin/python scripts/verify_static_snow_twoway.py
 ```
 
 Train the upstream Unitree G1 policy with:
@@ -74,15 +76,40 @@ TASK=Unitree-G1-Rough ./scripts/train-unitree-g1.sh
 
 ### G1 model provenance
 
-The browser dashboard and `scripts/view-g1.sh` load
-`vendor/mujoco_playground/external_deps/mujoco_menagerie/unitree_g1/scene_mjx.xml`
-directly with native MuJoCo. This is Menagerie's official G1 MJX scene,
-including its collision pairs, position actuators, and keyframes.
+The simulation uses Google DeepMind MuJoCo Menagerie's tuned G1 scene at
+`vendor/mujoco_playground/external_deps/mujoco_menagerie/unitree_g1/scene_mjx.xml`.
+Unitree RL MjLab remains the policy/task source. The active editor direction is
+native USD/RTX through `studio/omniverse`; the retired browser renderer and its
+HTTP server are archived under `archive/web-dashboard-legacy/`.
 
-`scripts/train-unitree-g1.sh` intentionally remains on Unitree MJLab's adapted
-G1 XML because the training task's actuator and observation conventions are
-coupled to it. Its meshes are byte-identical to Menagerie, but it is a separate
-training representation rather than the canonical dashboard scene.
+The new `simulation.NewtonMuJoCoBridge` advances the model with
+`SolverMuJoCo`, then mirrors Newton's state into native MuJoCo. It converts
+collider impulses and optional world-space contact positions into accumulated
+body forces/torques. Run
+`scripts/verify-newton-mujoco.sh` for the CPU smoke test.
+
+### Snow, ice, and policy
+
+`simulation/snow.py` validates the multilayer material state and maps it to
+Newton attributes. `simulation/newton_snow.py` is the compatibility MPM path;
+it should not be treated as the final snow-contact architecture because it
+uses a kinematic-foot/heightfield feedback bridge. The replacement work lives
+in `simulation/newton_snow_twoway.py` and follows Newton's official direct
+rigid/MPM two-way coupling pattern with the snowpack treated as a static initial
+condition.
+
+The runtime loads the vendored Unitree G1 velocity ONNX checkpoint from run
+`2026-03-18_18-40-20`. Exported metadata supplies joint order, default pose, PD
+gains, and action scale. The policy layer reconstructs the recorded 98-element actor
+observation, verifies actuator ordering, installs the exported gains into the
+Menagerie position actuators, and evaluates 29-action inference at 50 Hz.
+
+`maps/build_everest_visual.py` produces the physical Everest terrain artifact.
+The native editor must read/write that same physical terrain representation for
+crop and scale operations; visual-only transforms are not allowed to silently
+change collision scale. The velocity checkpoint was trained on flat terrain,
+so nonzero commands on the Everest slope are not treated as validated
+locomotion.
 
 The intended architecture is:
 

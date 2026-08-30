@@ -19,15 +19,12 @@ def main() -> None:
     import mujoco_warp
     import torch
     import warp as wp
-    import newton
     import mjlab
-    from newton.solvers import SolverImplicitMPM, SolverMuJoCo
 
     print("Everest Dream RL stack")
     print(f"  Python       {sys.version.split()[0]}")
     print(f"  MuJoCo       {mujoco.__version__}")
     print(f"  MuJoCo Warp  {version('mujoco_warp')}")
-    print(f"  Newton       {version('newton')}")
     print(f"  MJLab        {version('mjlab')}")
     print(f"  Torch        {torch.__version__}")
     print(f"  CUDA         {torch.cuda.is_available()}")
@@ -36,8 +33,6 @@ def main() -> None:
 
     wp.init()
     print(f"  Warp device  {wp.get_device()}")
-    print(f"  Newton MPM   {SolverImplicitMPM.__name__}")
-    print(f"  Newton MJ    {SolverMuJoCo.__name__}")
 
     # Import Unitree task registration from the vendored checkout.  The
     # upstream package is intentionally named `src`, so keep its checkout on
@@ -53,9 +48,8 @@ def main() -> None:
         raise RuntimeError(f"Unitree G1 tasks were not registered: {sorted(missing)}")
     print("  G1 tasks      Unitree-G1-Flat, Unitree-G1-Rough")
 
-    print("\nOK: shared MuJoCo/Newton/Unitree runtime is import-compatible.")
+    print("\nOK: legacy MJLab/Unitree training runtime is import-compatible.")
 
 
 if __name__ == "__main__":
     main()
-

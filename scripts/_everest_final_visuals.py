@@ -1,0 +1,31 @@
+from pathlib import Path
+
+p=Path('studio/unity/EverestSim/Assets/Scripts/EverestTerrainRenderer.cs')
+s=p.read_text()
+s=s.replace('new Color(0.35f, 0.68f, 0.82f, 0.62f)', 'new Color(0.24f, 0.60f, 0.76f, 0.28f)')
+s=s.replace('new Color(0.22f, 0.37f, 0.46f, 0.38f)', 'new Color(0.18f, 0.34f, 0.42f, 0.16f)')
+s=s.replace('heights[sourceIndex].Value<float>() + 0.002f', 'heights[sourceIndex].Value<float>() + 0.024f')
+p.write_text(s)
+
+p=Path('studio/unity/EverestSim/Assets/Shaders/EverestWireTerrain.shader')
+s=p.read_text().replace('        ZWrite On', '        ZWrite Off')
+p.write_text(s)
+
+p=Path('simulation/unity_bridge.py')
+s=p.read_text()
+s=s.replace('''    "snowfall_mm_h": 0.0,\n    "wind_speed_m_s": 8.0,''', '''    "snowfall_mm_h": 1.5,\n    "wind_speed_m_s": 9.0,''', 1)
+s=s.replace('''    "wind_speed_m_s": 8.0,\n    "wind_direction_deg": 250.0,\n    "snowfall_mm_h": 0.0,\n    "visibility_scale": 1.0,\n    "cloud_density": 0.28,\n    "cloud_coverage": 0.42,\n    "cloud_radius_m": 120.0,\n    "cloud_altitude_m": 42.0,\n    "cloud_thickness_m": 30.0,\n    "cloud_speed": 0.35,''', '''    "wind_speed_m_s": 9.0,\n    "wind_direction_deg": 250.0,\n    "snowfall_mm_h": 1.5,\n    "visibility_scale": 0.88,\n    "cloud_density": 0.42,\n    "cloud_coverage": 0.58,\n    "cloud_radius_m": 170.0,\n    "cloud_altitude_m": 38.0,\n    "cloud_thickness_m": 46.0,\n    "cloud_speed": 0.40,''', 1)
+p.write_text(s)
+
+p=Path('studio/unity/EverestSim/Assets/Scripts/EverestEditorHud.cs')
+s=p.read_text()
+s=s.replace('private float _windSpeed = 8f;', 'private float _windSpeed = 9f;')
+s=s.replace('private float _snowfall;', 'private float _snowfall = 1.5f;')
+s=s.replace('private float _visibility = 1f;', 'private float _visibility = 0.88f;')
+s=s.replace('private float _cloudDensity = 0.28f;', 'private float _cloudDensity = 0.42f;')
+s=s.replace('private float _cloudCoverage = 0.42f;', 'private float _cloudCoverage = 0.58f;')
+s=s.replace('private float _cloudRadius = 120f;', 'private float _cloudRadius = 170f;')
+s=s.replace('private float _cloudAltitude = 42f;', 'private float _cloudAltitude = 38f;')
+s=s.replace('private float _cloudThickness = 30f;', 'private float _cloudThickness = 46f;')
+s=s.replace('private float _cloudSpeed = 0.35f;', 'private float _cloudSpeed = 0.40f;')
+p.write_text(s)

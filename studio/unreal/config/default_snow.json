@@ -1,0 +1,13 @@
+{
+  "surface_friction": 0.36,
+  "snowfall_mm_h": 8.0,
+  "wind_speed_m_s": 18.0,
+  "wind_direction_deg": 250.0,
+  "temperature_c": -18.0,
+  "slope_deg": 18.0,
+  "layers": [
+    {"type":"POWDER","label":"Fresh powder","color":[0.96,0.98,1.0],"thickness_m":0.08,"density_kg_m3":120,"stiffness_pa":35000,"compressive_strength_pa":3500,"shear_strength_pa":1800,"compaction_hardening":12,"bond_strength_below_pa":2500},
+    {"type":"WIND_PACK","label":"Wind slab","color":[0.83,0.90,0.97],"thickness_m":0.15,"density_kg_m3":330,"stiffness_pa":320000,"compressive_strength_pa":28000,"shear_strength_pa":14000,"compaction_hardening":24,"bond_strength_below_pa":9000},
+    {"type":"DENSE_SNOW","label":"Old dense snow","color":[0.70,0.82,0.92],"thickness_m":0.32,"density_kg_m3":510,"stiffness_pa":1500000,"compressive_strength_pa":140000,"shear_strength_pa":70000,"compaction_hardening":35,"bond_strength_below_pa":120000}
+  ]
+}

@@ -1,0 +1,35 @@
+[package]
+title = "Everest Studio"
+version = "0.1.0"
+description = "Native RTX editor for Unitree G1 + Newton static snow on Everest terrain."
+keywords = ["everest", "robotics", "newton", "snow", "usd"]
+
+[dependencies]
+"omni.kit.uiapp" = {}
+"omni.kit.viewport.window" = {}
+"omni.kit.window.stage" = {}
+"omni.kit.window.property" = {}
+"omni.kit.window.content_browser" = {}
+"omni.kit.window.toolbar" = {}
+"omni.kit.menu.file" = {}
+"omni.kit.menu.edit" = {}
+"omni.kit.menu.create" = {}
+"omni.kit.manipulator.camera" = {}
+"omni.kit.manipulator.prim" = {}
+"omni.kit.manipulator.selection" = {}
+"omni.kit.material.library" = {}
+"omni.rtx.settings.core" = {}
+"isaacsim.physics.newton" = {}
+"isaacsim.physics.newton.ui" = {}
+"isaacsim.asset.importer.mjcf" = {}
+"everest.studio" = {}
+
+[settings]
+app.window.title = "Everest Studio"
+exts."isaacsim.physics.newton".auto_switch_on_startup = true
+exts."isaacsim.physics.newton".capture_graph_physics_step = true
+exts."omni.kit.viewport.window".startup.windowName = "Everest Viewport"
+
+[settings.app.exts]
+folders.'++' = ["${app}/../exts"]
+

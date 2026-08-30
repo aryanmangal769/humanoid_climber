@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="theme-color" content="#181818" />
+    <title>Everest Studio</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {"imports":{"three":"/vendor/three/build/three.module.js"}}
+    </script>
+  </head>
+  <body>
+    <main class="ide-shell" aria-label="Everest simulation editor">
+      <header class="titlebar">
+        <div class="window-brand"><span class="app-mark">△</span><strong>Everest Studio</strong></div>
+        <nav class="menu-strip" aria-label="Application menu"><button>File</button><button>Edit</button><button>View</button><button>Simulation</button></nav>
+        <div class="title-status"><span id="connection-dot" class="connection-dot"></span><strong id="engine-name">MUJOCO</strong><span id="connection-label">CONNECTING</span></div>
+      </header>
+
+      <aside class="activitybar" aria-label="Workspace">
+        <button class="activity-button active" data-workspace="explorer" title="Explorer" aria-label="Explorer"><svg viewBox="0 0 24 24"><path d="M4 3h6l2 2h8v16H4zM6 7v12h12V7z"/></svg></button>
+        <button class="activity-button" data-workspace="terrain" title="Terrain" aria-label="Terrain"><svg viewBox="0 0 24 24"><path d="m3 18 5-8 4 5 3-4 6 7H3zm5-4.5L6.4 16h3.7z"/></svg></button>
+        <button class="activity-button" data-workspace="snow" title="Snowpack" aria-label="Snowpack"><svg viewBox="0 0 24 24"><path d="M11 2h2v5.1l4.4-2.55 1 1.74L14 8.85l4.4 2.55-1 1.73L13 10.6v5.1l4.4 2.54-1 1.74L12 17.4l-4.4 2.58-1-1.74 4.4-2.54v-5.1l-4.4 2.53-1-1.73L10 8.85 5.6 6.29l1-1.74L11 7.1z"/></svg></button>
+        <button class="activity-button" data-workspace="simulation" title="Simulation" aria-label="Simulation"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+        <span class="activity-spacer"></span>
+        <button class="activity-button" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24"><path d="M19.4 13a7 7 0 0 0 .05-1l2-1.55-2-3.46-2.45 1a8 8 0 0 0-1.7-1L15 4.35h-4L10.7 7a8 8 0 0 0-1.7 1L6.55 7l-2 3.46L6.6 12a7 7 0 0 0 .05 1l-2.1 1.55 2 3.46 2.45-1a8 8 0 0 0 1.7 1l.3 2.64h4l.3-2.64a8 8 0 0 0 1.7-1l2.45 1 2-3.46zM13 15.45A3.45 3.45 0 1 1 13 8.55a3.45 3.45 0 0 1 0 6.9z"/></svg></button>
+      </aside>
+
+      <aside class="sidebar" aria-label="Project sidebar">
+        <section class="workspace-panel active" data-panel="explorer">
+          <header class="sidebar-heading"><span>EXPLORER</span><button title="More actions">•••</button></header>
+          <div class="tree-title"><span class="chevron">⌄</span><strong>EVEREST-HACK</strong></div>
+          <div class="file-tree">
+            <button class="tree-item active" data-editor-tab="scene"><span>◇</span>scene.everest</button>
+            <button class="tree-item" data-editor-tab="terrain"><span>▧</span>terrain.dem</button>
+            <button class="tree-item" data-editor-tab="snow"><span>❄</span>snowpack.static</button>
+            <button class="tree-item" data-editor-tab="robot"><span>♙</span>robot.g1</button>
+            <button class="tree-item" data-editor-tab="weather"><span>☁</span>weather.snapshot</button>
+          </div>
+          <div class="sidebar-section"><span class="chevron">›</span>OUTLINE</div>
+          <div class="sidebar-section"><span class="chevron">›</span>HISTORY</div>
+        </section>
+        <section class="workspace-panel" data-panel="terrain">
+          <header class="sidebar-heading"><span>TERRAIN TOOLS</span></header>
+          <p class="sidebar-copy">Crop and rescale the shared physical Everest heightfield. Applied edits update both collision and render artifacts.</p>
+          <button class="sidebar-action" data-focus-inspector="terrain">Open terrain inspector</button>
+        </section>
+        <section class="workspace-panel" data-panel="snow">
+          <header class="sidebar-heading"><span>SNOWPACK</span></header>
+          <p class="sidebar-copy">Static snapshot mode. Mechanical parameters define the pack at simulation start; snowfall does not accumulate.</p>
+          <button class="sidebar-action" data-focus-inspector="snow">Open snow inspector</button>
+        </section>
+        <section class="workspace-panel" data-panel="simulation">
+          <header class="sidebar-heading"><span>SIMULATION</span></header>
+          <div class="sidebar-stat"><span>Time</span><strong id="sim-time">0.000 s</strong></div>
+          <div class="sidebar-stat"><span>Policy</span><strong id="policy">G1 velocity</strong></div>
+          <div class="sidebar-stat"><span>Telemetry</span><strong id="fps">— Hz</strong></div>
+          <button class="sidebar-action" data-focus-inspector="simulation">Open simulation inspector</button>
+        </section>
+      </aside>
+
+      <section class="editor-area">
+        <nav class="editor-tabs" aria-label="Open editors">
+          <button class="editor-tab active" data-editor-tab="scene"><span>◇</span>scene.everest <i>×</i></button>
+          <button class="editor-tab" data-editor-tab="terrain"><span>▧</span>terrain.dem <i>×</i></button>
+          <button class="editor-tab" data-editor-tab="snow"><span>❄</span>snowpack.static <i>×</i></button>
+        </nav>
+        <div class="canvas-shell">
+          <div id="viewport" class="viewport"></div>
+          <div class="canvas-toolbar" role="toolbar" aria-label="Viewport tools">
+            <button class="tool-button active" data-canvas-tool="select" title="Select (V)">↖</button>
+            <button class="tool-button" data-canvas-tool="crop" title="Crop terrain">⌗</button>
+            <button class="tool-button" data-canvas-tool="orbit" title="Orbit">◎</button>
+            <span class="toolbar-divider"></span>
+            <button id="home-camera" class="tool-button wide" title="Frame scene">Frame</button>
+          </div>
+          <div class="canvas-info">
+            <span><b id="terrain-mode">PREVIEW</b><small id="terrain-detail">terrain loading</small></span>
+            <span><b id="weather">NO FEED</b><small id="weather-detail">weather idle</small></span>
+          </div>
+          <section id="loading" class="loading" aria-live="polite"><span class="spinner"></span><p>Loading scene</p></section>
+          <div id="error" class="error" role="status" hidden>Viewer offline · reconnecting…</div>
+        </div>
+      </section>
+
+      <aside id="debug-panel" class="inspector" aria-label="Properties inspector" data-open="true">
+        <header class="inspector-header"><span>PROPERTIES</span><button id="debug-close" class="panel-button" title="Collapse inspector">×</button></header>
+        <nav class="inspector-tabs">
+          <button class="active" data-inspector-tab="terrain">Terrain</button>
+          <button data-inspector-tab="snow">Snow</button>
+          <button data-inspector-tab="simulation">Sim</button>
+        </nav>
+
+        <div class="inspector-group active" data-inspector-group="terrain">
+          <div class="property-section">
+            <header><strong>Physical terrain</strong><span class="badge">METRES</span></header>
+            <p class="property-note">These values rebuild the shared render + MuJoCo collision heightfield.</p>
+            <label class="range-field"><span>Horizontal scale <output data-terrain-output="scale_xy">1.00×</output></span><input type="range" data-terrain-param="scale_xy" min="0.25" max="4" step="0.05" value="1" /></label>
+            <label class="range-field"><span>Vertical scale <output data-terrain-output="scale_z">1.00×</output></span><input type="range" data-terrain-param="scale_z" min="0.1" max="5" step="0.05" value="1" /></label>
+          </div>
+          <div class="property-section">
+            <header><strong>Crop</strong><span class="badge subtle">SOURCE %</span></header>
+            <label class="range-field"><span>Left <output data-terrain-output="crop_left">0%</output></span><input type="range" data-terrain-param="crop_left" min="0" max="80" step="1" value="0" /></label>
+            <label class="range-field"><span>Right <output data-terrain-output="crop_right">100%</output></span><input type="range" data-terrain-param="crop_right" min="20" max="100" step="1" value="100" /></label>
+            <label class="range-field"><span>Bottom <output data-terrain-output="crop_bottom">0%</output></span><input type="range" data-terrain-param="crop_bottom" min="0" max="80" step="1" value="0" /></label>
+            <label class="range-field"><span>Top <output data-terrain-output="crop_top">100%</output></span><input type="range" data-terrain-param="crop_top" min="20" max="100" step="1" value="100" /></label>
+            <div class="button-row"><button id="terrain-apply" class="primary-button">Apply physical edit</button><button id="terrain-reset" class="secondary-button">Reset</button></div>
+            <p id="terrain-edit-status" class="inline-status">Source terrain unchanged</p>
+          </div>
+          <div class="property-section">
+            <header><strong>Display</strong><span class="badge warn">VISUAL ONLY</span></header>
+            <label class="range-field"><span>Z exaggeration <output data-terrain-output="display_z">1.00×</output></span><input type="range" data-terrain-param="display_z" min="1" max="4" step="0.05" value="1" /></label>
+          </div>
+        </div>
+
+        <div class="inspector-group" data-inspector-group="snow">
+          <div class="physics-state"><p id="snow-physics-note" class="debug-note" data-active="false"><span></span><b>Connecting Newton MPM…</b></p><p class="debug-caption">Static snapshot · atmospheric snowfall is visual only</p></div>
+          <div class="property-section">
+            <header><strong>Environment snapshot</strong></header>
+            <label class="range-field"><span>Wind speed <output data-output="wind_speed_m_s">18 m/s</output></span><input type="range" data-param="wind_speed_m_s" min="0" max="45" step="1" value="18" /></label>
+            <label class="range-field"><span>Wind direction <output data-output="wind_direction_deg">245°</output></span><input type="range" data-param="wind_direction_deg" min="0" max="359" step="1" value="245" /></label>
+            <label class="range-field"><span>Visible snowfall <output data-output="snowfall_mm_h">2.5 mm/h</output></span><input type="range" data-param="snowfall_mm_h" min="0" max="20" step="0.5" value="2.5" /></label>
+            <label class="range-field"><span>Temperature <output data-output="temperature_c">−14 °C</output></span><input type="range" data-param="temperature_c" min="-35" max="3" step="1" value="-14" /></label>
+            <label class="range-field"><span>Path slope <output data-output="slope_deg">21°</output></span><input type="range" data-param="slope_deg" min="8" max="32" step="1" value="21" /></label>
+          </div>
+          <div class="property-section">
+            <header><strong>Snow column</strong></header>
+            <label class="range-field"><span>Surface friction <output data-output="surface_friction">μ 0.35</output></span><input type="range" data-param="surface_friction" min="0.05" max="0.8" step="0.01" value="0.35" /></label>
+            <label class="select-field"><span>Active layer</span><select id="active-layer" aria-label="Active snow layer"></select></label>
+            <div class="layer-stack" id="layer-stack" aria-label="Snow layers"></div>
+          </div>
+          <div class="property-section layer-parameters">
+            <header><strong>Mechanical state</strong><span class="badge">NEWTON</span></header>
+            <label class="range-field"><span>Thickness <output data-layer-output="thickness_m"></output></span><input type="range" data-layer-param="thickness_m" min="0.01" max="0.8" step="0.01" /></label>
+            <label class="range-field"><span>Density <output data-layer-output="density_kg_m3"></output></span><input type="range" data-layer-param="density_kg_m3" min="30" max="700" step="10" /></label>
+            <label class="range-field"><span>Stiffness <output data-layer-output="stiffness_pa"></output></span><input type="range" data-layer-param="stiffness_pa" min="1" max="3000" step="5" /></label>
+            <label class="range-field"><span>Compression <output data-layer-output="compressive_strength_pa"></output></span><input type="range" data-layer-param="compressive_strength_pa" min="0.1" max="500" step="0.5" /></label>
+            <label class="range-field"><span>Shear strength <output data-layer-output="shear_strength_pa"></output></span><input type="range" data-layer-param="shear_strength_pa" min="0.05" max="200" step="0.25" /></label>
+            <label class="range-field"><span>Hardening <output data-layer-output="compaction_hardening"></output></span><input type="range" data-layer-param="compaction_hardening" min="0" max="50" step="1" /></label>
+            <label class="range-field"><span>Bond below <output data-layer-output="bond_strength_below_pa"></output></span><input type="range" data-layer-param="bond_strength_below_pa" min="0" max="100" step="0.1" /></label>
+            <button id="debug-reset" class="secondary-button full">Reset snow prior</button>
+          </div>
+        </div>
+
+        <div class="inspector-group" data-inspector-group="simulation">
+          <div class="property-section">
+            <header><strong>Transport</strong></header>
+            <div class="transport inspector-transport">
+              <button id="play" class="icon-button primary" type="button" aria-label="Play simulation"><svg class="play-icon" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5z"/></svg><svg class="pause-icon" viewBox="0 0 24 24"><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg></button>
+              <button id="reset" class="icon-button" type="button" title="Reset"><svg viewBox="0 0 24 24"><path d="M12 5a7 7 0 1 1-6.32 4H3l3.5-4L10 9H7.75A5 5 0 1 0 12 7z"/></svg></button>
+              <button id="stand" class="text-button">Stand</button>
+            </div>
+          </div>
+          <div class="property-section"><header><strong>Surface</strong></header><div class="segmented"><button type="button" data-surface="snow" aria-pressed="true">Snow</button><button type="button" data-surface="ice">Ice</button></div></div>
+          <div class="property-section"><header><strong>Runtime</strong></header><div class="property-readout"><span>Physics</span><strong>Newton MPM + MuJoCo</strong></div><div class="property-readout"><span>Mode</span><strong>Static snow snapshot</strong></div></div>
+        </div>
+      </aside>
+
+      <button id="debug-open" class="debug-open" type="button" aria-controls="debug-panel" aria-expanded="true" hidden>Properties</button>
+      <footer class="statusbar"><span>main*</span><span>↻ Newton MPM</span><span class="status-spacer"></span><span>1 unit = 1 m</span><span>UTF-8</span><span>Everest Studio</span></footer>
+    </main>
+    <script type="module" src="/editor-ui.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

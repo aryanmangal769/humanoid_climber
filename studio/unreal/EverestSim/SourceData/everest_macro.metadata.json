@@ -1,0 +1,24 @@
+{
+  "source": "maps/output_hh.tif",
+  "bounds_lon_lat": [
+    86.65,
+    27.63,
+    86.95,
+    28.05
+  ],
+  "width_m": 29530.585335919033,
+  "depth_m": 46754.40000000019,
+  "min_elevation_m": 1718.4815673828125,
+  "max_elevation_m": 8735.5205078125,
+  "mid_elevation_m": 5227.001037597656,
+  "unreal_landscape": {
+    "resolution": [
+      1009,
+      1513
+    ],
+    "x_scale_cm": 2929.621561103079,
+    "y_scale_cm": 3092.2222222222344,
+    "z_scale": 1370.5154180526733,
+    "actor_z_cm": 522700.1037597656
+  }
+}

@@ -1,6 +1,16 @@
 vendor/mujoco_playground/.venv/
 vendor/mujoco_playground/external_deps/
 .venv-rl/
+.venv-isaacsim/
 logs/
 __pycache__/
 *.pyc
+
+# Unity generated state
+studio/unity/EverestSim/Library/
+studio/unity/EverestSim/Temp/
+studio/unity/EverestSim/Obj/
+studio/unity/EverestSim/Logs/
+studio/unity/EverestSim/UserSettings/
+studio/unity/EverestSim/Build/
+studio/unity/EverestSim/Builds/

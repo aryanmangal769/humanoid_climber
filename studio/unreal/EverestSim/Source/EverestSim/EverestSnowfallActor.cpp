@@ -1,0 +1,9 @@
+#include "EverestSnowfallActor.h"
+#include "Components/InstancedStaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+
+AEverestSnowfallActor::AEverestSnowfallActor(){PrimaryActorTick.bCanEverTick=true;Flakes=CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("Snowfall"));SetRootComponent(Flakes);Flakes->SetCollisionEnabled(ECollisionEnabled::NoCollision);Flakes->SetCastShadow(false);}
+void AEverestSnowfallActor::BeginPlay(){Super::BeginPlay();Flakes->SetStaticMesh(LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Sphere.Sphere")));Positions.SetNum(900);for(int32 I=0;I<Positions.Num();++I){ResetFlake(I,true);Flakes->AddInstance(FTransform(FQuat::Identity,Positions[I],FVector(0.008f)));}}
+void AEverestSnowfallActor::SetWeather(float Snow,float Wind,float Dir,float Vis){Intensity=FMath::Clamp(Snow/20.f,0.f,1.f);WindCmS=Wind*100.f;WindDeg=Dir;Visibility=FMath::Clamp(Vis,0.05f,1.f);}
+void AEverestSnowfallActor::ResetFlake(int32 I,bool RandomZ){const float Radius=700.f;Positions[I]=Focus+FVector(FMath::FRandRange(-Radius,Radius),FMath::FRandRange(-Radius,Radius),RandomZ?FMath::FRandRange(0,900.f):900.f);}
+void AEverestSnowfallActor::Tick(float Dt){Super::Tick(Dt);const FVector Wind(FMath::Cos(FMath::DegreesToRadians(WindDeg)), -FMath::Sin(FMath::DegreesToRadians(WindDeg)),0);const int32 Active=Intensity<=0.001f?0:FMath::Clamp((int32)(Positions.Num()*Intensity),40,Positions.Num());for(int32 I=0;I<Positions.Num();++I){if(I<Active){Positions[I]+=(Wind*WindCmS+FVector(0,0,-FallSpeed))*Dt;if(Positions[I].Z<Focus.Z-120.f || FVector::DistSquared2D(Positions[I],Focus)>900.f*900.f)ResetFlake(I,false);Flakes->UpdateInstanceTransform(I,FTransform(FQuat::Identity,Positions[I],FVector(0.006f+0.004f*Intensity)),true,false,true);}else Flakes->UpdateInstanceTransform(I,FTransform(FQuat::Identity,FVector(0,0,-100000),FVector::ZeroVector),true,false,true);}Flakes->MarkRenderStateDirty();}

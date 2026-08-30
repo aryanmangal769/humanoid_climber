@@ -1,0 +1,17 @@
+[package]
+version = "0.1.0"
+title = "Everest Studio"
+description = "Native RTX editor for the Everest G1 + Newton static snow simulation."
+category = "Robotics"
+keywords = ["everest", "newton", "g1", "snow", "robotics"]
+
+[dependencies]
+"isaacsim.physics.newton" = {}
+"isaacsim.physics.newton.ui" = {}
+"isaacsim.asset.importer.mjcf" = {}
+
+[[python.module]]
+name = "everest.studio"
+
+[settings]
+exts."everest.studio".windowOpenByDefault = true
