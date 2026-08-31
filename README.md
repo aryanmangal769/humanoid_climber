@@ -14,7 +14,7 @@ core runtime.
 
 ## Two-minute SummitOS presentation and demo
 
-<video src="./SummitOS-presentation-and-demo.mp4" controls width="100%" title="SummitOS two-minute presentation and demo"></video>
+![SummitOS two-minute presentation and demo](./SummitOS-presentation-and-demo.gif)
 
 MjLab remains an external Python dependency; its source is not copied into this
 repository.
