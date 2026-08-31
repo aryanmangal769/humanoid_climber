@@ -568,6 +568,101 @@ the full layer.
 The HUD reports this startup state as `SIM HOLD` so an operator can distinguish
 intentional stationary settlement inspection from an active locomotion run.
 
+## 2026-08-30 autonomous Unity Everest showcase
+
+The autonomous demo is now a separate launch mode; normal simulator mode and
+its full editor dock remain unchanged:
+
+```bash
+scripts/start-autonomous-demo.sh --port 18768
+```
+
+Persistent deployment keeps the tracks isolated:
+
+- main simulation: WebSocket `18765`, Unity WebGL `18888`;
+- autonomous demo: WebSocket `18768`, Unity WebGL `18889`.
+
+The demo web server is launched with `--backend-port 18768`; opening bare
+`http://HOST:18889/` redirects to a host-correct Unity backend query instead of
+falling back to the main simulator.
+
+The showcase does **not** replace the renderer with a flat MuJoCo scene. The
+main viewport remains the existing Unity Everest pipeline: full DEM and macro
+terrain, shared snow/ice/rock shading, atmosphere/clouds/snowfall, the G1 mesh,
+MuJoCo robot physics, and live Newton multilayer deformation. Backend state
+reports this explicitly as `unity_everest+mujoco_robot+newton_snow`.
+
+The backend publishes an `everest-autonomous-showcase/v1` manifest containing:
+
+- the terrain-conforming ascent route;
+- an oriented low-friction snow-over-ice region;
+- current stage and visible training-attempt count;
+- truthful policy/checkpoint-slot status;
+- subtle applied wind and scripted-controller force vectors;
+- user-facing decision summaries for the chat-style demo transcript.
+
+MuJoCo exposes one friction tuple for the full heightfield rather than one per
+heightfield cell. The marked ice region therefore acts as a spatial entry gate:
+the low coefficient is applied only while the robot is within the oriented
+region, and restored on exit. Unity renders the same backend-authored boundary.
+
+During failure handling, the temporary `RL TRAINING` viewport opens and shows
+the raw MuJoCo replay of the captured local Newton terrain state. Main MuJoCo
+and Newton physics continue underneath; only the demo narrative advances
+through the two visible attempts. The tab closes automatically when the return
+stage is reached and Unity resumes the main Everest viewport.
+
+In autonomous-demo mode the right dock intentionally contains only weather
+presets and a scrolling `AGENT DECISION STREAM`. Weather presets update clouds,
+fog, snowfall, and the physical MuJoCo wind magnitude. The normal mode retains
+the complete `ENV SETUP` / `DEMO` dock.
+
+Policy truth boundary:
+
+- `flat` remains the admitted bundled 98-observation / 29-action ONNX policy;
+- a separate clone at `/home/auverus/git/humanoid_climber_safety_ckpts` provides
+  MjLab 1.6 baseline, incline, and wind actors with a different 99-observation
+  ordering; they are exported to `ckpt/exported/*.onnx` and exposed as
+  `candidate_available`, not admitted/validated;
+- the supplied recovery actor is `160 -> 29` motion tracking and remains
+  `incompatible_160_observation` until its reference-motion observation path is
+  ported; rough terrain remains `reserved_unavailable`;
+- the separate autonomous showcase keeps explicitly labeled deterministic
+  controllers until candidate admission is complete. The normal main sim can
+  select and test the three 99-observation velocity candidates directly.
+
+Re-export after checkpoint updates with `scripts/export_mjlab_pt_policy.py`.
+The exporter uses safe `weights_only=True`, copies G1 joint/action metadata from
+the bundled known-good ONNX, and labels the resulting model
+`mjlab-1.6-velocity-99/v1`.
+
+The recovery placeholder uses live MuJoCo forces/torques and joint targets, not
+a pose teleport. The CUDA regression reached the climb stage with pelvis-up
+dot product `0.9967`, terrain clearance `0.765 m`, no simulation fault, and
+Newton on `cuda:0`.
+
+An independent launch flag is available for diagnostics:
+
+```bash
+scripts/start-simulation-backend.sh --disable-newton
+```
+
+It retains MuJoCo robot/DEM physics but disables Newton construction and reports
+`disabled_reason=disabled_by_launch_flag`. The autonomous launcher rejects this
+flag because the showcase requires live snow deformation.
+
+Validation added/performed:
+
+```text
+PYTHONPATH=. .venv-sim/bin/python scripts/verify_autonomous_demo.py: PASS
+PYTHONPATH=. .venv-sim/bin/python scripts/verify_candidate_policies.py: PASS
+tests/test_policy_supervisor.py: PASS
+RTX 4090 Newton lifecycle through recovery/climb: PASS
+Unity 2022.3.0f1 WebGL/IL2CPP build: PASS
+training-tab Chromium capture: severe_events=0
+post-training main-view Chromium capture: severe_events=0
+```
+
 ## 2026-08-30 policy/retraining demo workflow
 
 The right dock now has two tabs: `ENV SETUP` retains the environment, weather,
@@ -604,13 +699,16 @@ material context, robot `qpos`/`qvel`, command, feet/contact telemetry, and the
 detector output. The training status is explicitly
 `requested_not_launched` because this repository has no trainer endpoint.
 
-The local policy registry currently contains one real compatible
-98-observation/29-action ONNX checkpoint (`flat`). `ice_incline`, `wind`, and
-`rough` can be returned for demos by reusing that checkpoint, but the UI marks
-each as `demo_pretrained · flat checkpoint surrogate`. `recovery` remains
-incompatible/unavailable because its observation/setup contract differs. A
-real returned checkpoint is accepted only after the runtime validates the
-compatible ONNX schema and actuator layout. Selecting LIVE remains read-only.
+The registry retains the admitted 98-observation `flat` policy and also discovers
+the separately cloned MjLab 1.6 candidates. `flat_mjlab_1_6`, `ice_incline`, and
+`wind` use an explicit 99-value observation builder (base linear/angular
+velocity, projected gravity, relative joint position/velocity, previous action,
+and twist command) and are labeled `candidate_available`. Their ONNX outputs
+were numerically compared to the original PyTorch actors with maximum errors
+below `4e-7`, then each completed 36 inference cycles in the main MuJoCo engine
+without a fault. Recovery remains incompatible at 160 observations and rough
+terrain remains reserved. A returned checkpoint is accepted only after runtime
+schema and actuator-layout validation. Selecting LIVE remains read-only.
 
 Acceptance commands for this branch:
 
@@ -627,3 +725,43 @@ backend: the DEMO tab rendered, the robot/terrain loaded, and no runtime,
 shader, or WebAssembly exception events were observed. Production backend
 `18765` and served WebGL assets should only be restarted/replaced after the
 branch is committed and pushed.
+
+## 2026-08-30 physical-locomotion continuation
+
+The autonomous showcase now uses real exported MjLab 1.6 checkpoint inference
+for both post-recovery locomotion phases:
+
+- Recovery remains a labeled deterministic physical get-up controller.
+- Once upright, the deterministic supervisor measures live slope, friction,
+  and wind and prepares the compatible checkpoint's actuator gains. Recovery
+  retains the validated scene-home target until its load-bearing release; no
+  root translation or teleport is used.
+- The routed `ice_incline` actor then drives all 29 joint targets. After a
+  healthy forward traverse, the demo applies an exact 16 N wind and the same
+  supervisor selects and executes the `wind` checkpoint.
+- The Unity wind cue uses a larger presentation-only scale (`0.020`) while the
+  backend force vector remains exact.
+
+The no-Newton contract now completes:
+
+```text
+approach -> baseline_slide -> safety_hold -> training_attempt_1 ->
+training_attempt_2 -> specialist_return -> recovery -> climb -> crosswind ->
+complete
+```
+
+The accepted trace travels 2.72 m forward, finishes with pelvis up-dot 0.999,
+has alternating foot contacts, nonzero incline and wind inference counts, and
+ends with the router requesting and executing `wind`. These checks are locked
+into `scripts/verify_autonomous_demo.py`. Candidate-policy verification and
+`tests/test_policy_supervisor.py` also pass.
+
+Deployment state: demo backend `18768` was restarted with Newton on `cuda:0`;
+main backend/web ports `18765/18888` remained running. The Unity artifact at
+`/mnt/c/Users/auverus/Documents/EverestUnityWeb2/Builds/WebGL` was rebuilt and
+is served by demo port `18889`.
+
+Known limitation: live CUDA Newton advances much more slowly than the
+no-Newton contract and still needs an extended wall-clock observation to
+confirm the full post-recovery route under MPM coupling. The pending Unity
+training-subscene replacement remains unchanged from the earlier handoff.

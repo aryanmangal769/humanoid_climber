@@ -32,6 +32,10 @@ def main() -> None:
         assert initial["supervisor"]["active_policy_key"] == "flat"
         keys = {item["key"] for item in initial["registry"]}
         assert {"auto", "flat", "ice_incline", "wind", "rough", "recovery"} <= keys
+        registry = {item["key"]: item for item in initial["registry"]}
+        assert registry["flat"]["status"] == "available"
+        assert registry["ice_incline"]["status"] == "candidate_available"
+        assert registry["ice_incline"]["input_size"] == 99
 
         engine.control("demo_failure")
         waiting = engine.state()
@@ -68,19 +72,17 @@ def main() -> None:
         assert preview and preview["encoding"] == "jpeg/base64"
         assert len(preview["image"]) > 1000
 
-        engine.control("demo_return_pretrained", "ice_incline")
-        policy = engine.state()["policy"]
-        assert policy["selected_policy_key"] == "ice_incline"
-        active = policy["supervisor"]
-        assert active["stage"] == "policy_active"
-        assert active["active_policy_key"] == "ice_incline"
-        assert active["demo_pretrained"]
+        try:
+            engine.control("demo_return_pretrained", "ice_incline")
+        except ValueError as exc:
+            assert "shortcut is disabled" in str(exc)
+        else:
+            raise AssertionError("legacy demo-pretrained shortcut was incorrectly activated")
         print(json.dumps({
             "request_id": supervisor["request_id"],
             "manifest": str(manifest_path),
             "preview_bytes_base64": len(preview["image"]),
-            "active_policy": active["active_policy_label"],
-            "demo_pretrained": active["demo_pretrained"],
+            "candidate_policy": registry["ice_incline"],
         }, indent=2))
     finally:
         engine.stop()

@@ -25,6 +25,7 @@ BACKEND_URL = os.environ.get("EVEREST_CAPTURE_BACKEND")
 CAPTURE_WEATHER = os.environ.get("EVEREST_CAPTURE_WEATHER", "").strip().lower()
 CLICK_X = os.environ.get("EVEREST_CAPTURE_CLICK_X")
 CLICK_Y = os.environ.get("EVEREST_CAPTURE_CLICK_Y")
+WAIT_SECONDS = float(os.environ.get("EVEREST_CAPTURE_WAIT_SECONDS", "3.0"))
 
 
 def launch() -> subprocess.Popen[str]:
@@ -155,7 +156,7 @@ async def capture(ws_url: str) -> None:
                     "type": "control", "action": "pause", "value": True,
                 }))
 
-        await asyncio.sleep(3.0)
+        await asyncio.sleep(max(0.0, WAIT_SECONDS))
         shot = await call("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": False})
         SCREENSHOT.write_bytes(base64.b64decode(shot["data"]))
 

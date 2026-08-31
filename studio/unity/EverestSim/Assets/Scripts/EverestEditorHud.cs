@@ -55,6 +55,7 @@ namespace EverestSim
         private EverestVisualTerrainRenderer _visualTerrain;
         private EverestEnvironmentRenderer _environment;
         private EverestCameraController _camera;
+        private EverestTrainingSubscene _trainingSubscene;
         private EverestRuntime _runtime;
 
         private GUIStyle _chrome;
@@ -109,6 +110,7 @@ namespace EverestSim
         private int _mpmCoarseStride = 4;
         private float _patchRecenter = 0.70f;
         private bool _snowAccumulationEnabled = true;
+        private bool _newtonEnabled = true;
         private float _weatherTimeScale = 1f;
         private float _cheatSpeed = 1.6f;
         private float _cheatYawRate = 1.4f;
@@ -124,6 +126,11 @@ namespace EverestSim
         private Texture2D _subsetTexture;
         private string _subsetCaption = "Subset preview disabled";
         private string _checkpointReturnPath = "";
+        private bool _trainingTabOpen;
+        private bool _trainingViewportSelected;
+        private string _lastSupervisorStage = "monitoring";
+        private bool _demoTrainingWasActive;
+        private int _lastDemoLogCount;
         private readonly List<LayerDraft> _layers = new List<LayerDraft>();
 
         private static readonly string[] LayerTypes = { "POWDER", "WIND_PACK", "CRUST", "DENSE_SNOW", "FIRN", "ICE" };
@@ -133,6 +140,7 @@ namespace EverestSim
         private const float TopHeight = 36f;
         private const float BottomHeight = 22f;
         private const float SplitterWidth = 9f;
+        private const float ViewportTabsHeight = 25f;
 
         public bool BlocksSceneInput
         {
@@ -144,10 +152,12 @@ namespace EverestSim
                 var dockWidth = ResolveDockWidth(virtualWidth);
                 var point = ScreenToVirtual(Input.mousePosition);
                 var command = new Rect(0f, 0f, virtualWidth, TopHeight);
+                var viewportTabs = new Rect(0f, TopHeight, virtualWidth - dockWidth, _trainingTabOpen ? ViewportTabsHeight : 0f);
+                var trainingViewport = new Rect(0f, TopHeight + ViewportTabsHeight, virtualWidth - dockWidth, Mathf.Max(0f, virtualHeight - TopHeight - ViewportTabsHeight - BottomHeight));
                 var dock = new Rect(virtualWidth - dockWidth, TopHeight, dockWidth, Mathf.Max(0f, virtualHeight - TopHeight - BottomHeight));
                 var splitter = new Rect(dock.x - SplitterWidth * 0.5f, dock.y, SplitterWidth, dock.height);
                 var status = new Rect(0f, Mathf.Max(0f, virtualHeight - BottomHeight), virtualWidth, BottomHeight);
-                return _dockDragging || GUIUtility.hotControl != 0 || command.Contains(point) || dock.Contains(point) || splitter.Contains(point) || status.Contains(point);
+                return _dockDragging || GUIUtility.hotControl != 0 || command.Contains(point) || viewportTabs.Contains(point) || (_trainingViewportSelected && trainingViewport.Contains(point)) || dock.Contains(point) || splitter.Contains(point) || status.Contains(point);
             }
         }
 
@@ -160,7 +170,7 @@ namespace EverestSim
                 var dockWidth = ResolveDockWidth(virtualWidth);
                 var leftWidthPixels = Mathf.Max(1f, Screen.width - dockWidth * scale);
                 var bottomPixels = BottomHeight * scale;
-                var topPixels = TopHeight * scale;
+                var topPixels = (TopHeight + (_trainingTabOpen ? ViewportTabsHeight : 0f)) * scale;
                 var heightPixels = Mathf.Max(1f, Screen.height - topPixels - bottomPixels);
                 return new Rect(
                     0f,
@@ -184,6 +194,7 @@ namespace EverestSim
             EverestVisualTerrainRenderer visualTerrain,
             EverestEnvironmentRenderer environment,
             EverestCameraController camera,
+            EverestTrainingSubscene trainingSubscene,
             EverestRuntime runtime)
         {
             _backend = backend;
@@ -193,6 +204,7 @@ namespace EverestSim
             _visualTerrain = visualTerrain;
             _environment = environment;
             _camera = camera;
+            _trainingSubscene = trainingSubscene;
             _runtime = runtime;
             ResetDraftLayers();
             _backend.SubsetViewReceived += OnSubsetView;
@@ -308,11 +320,23 @@ namespace EverestSim
             if (_backend == null) return;
             EnsureStyles();
             SyncDraftFromBackendOnce();
+            SyncTrainingViewportLifecycle();
 
             var oldMatrix = GUI.matrix;
             GUI.matrix = Matrix4x4.Scale(new Vector3(_uiScale, _uiScale, 1f));
             var virtualWidth = Screen.width / _uiScale;
             var virtualHeight = Screen.height / _uiScale;
+
+            var demoTrainingFullscreen =
+                _backend.LatestState?["demo"]?.Value<bool?>("active") == true &&
+                _backend.LatestState?["demo"]?.Value<bool?>("training_view_active") == true;
+            if (demoTrainingFullscreen)
+            {
+                DrawDemoTrainingFullscreen(new Rect(0f, 0f, virtualWidth, virtualHeight));
+                GUI.matrix = oldMatrix;
+                return;
+            }
+
             _currentDockWidth = ResolveDockWidth(virtualWidth);
             _compactDock = _currentDockWidth < 300f;
 
@@ -328,10 +352,189 @@ namespace EverestSim
                 dockRect.height);
 
             DrawCommandBar(new Rect(0f, 0f, virtualWidth, TopHeight));
+            if (_trainingTabOpen)
+            {
+                DrawViewportTabs(new Rect(0f, TopHeight, dockRect.x, ViewportTabsHeight));
+                if (_trainingViewportSelected)
+                    DrawTrainingViewport(new Rect(0f, TopHeight + ViewportTabsHeight, dockRect.x, Mathf.Max(0f, virtualHeight - TopHeight - ViewportTabsHeight - BottomHeight)));
+            }
             HandleDockResize(splitterRect, virtualWidth);
             DrawDock(dockRect);
             DrawStatusBar(new Rect(0f, Mathf.Max(0f, virtualHeight - BottomHeight), virtualWidth, BottomHeight));
             GUI.matrix = oldMatrix;
+        }
+
+        private void DrawDemoTrainingFullscreen(Rect rect)
+        {
+            GUI.DrawTexture(rect, _dockTex, ScaleMode.StretchToFill, false);
+
+            if (_trainingSubscene != null && _trainingSubscene.Ready && _trainingSubscene.Texture != null)
+            {
+                GUI.DrawTexture(rect, _trainingSubscene.Texture, ScaleMode.ScaleAndCrop, false);
+            }
+            else if (_subsetTexture != null)
+            {
+                GUI.DrawTexture(rect, _subsetTexture, ScaleMode.ScaleAndCrop, false);
+            }
+
+            var buttonWidth = Mathf.Clamp(rect.width * 0.12f, 132f, 190f);
+            var stopped = _backend.LatestState?["demo"]?.Value<bool?>("operator_stopped") == true;
+            var stopRect = new Rect(
+                rect.xMax - buttonWidth * 2f - 28f,
+                rect.yMax - 52f,
+                buttonWidth,
+                34f);
+            if (GUI.Button(stopRect, stopped ? "RESUME JOURNEY" : "STOP JOURNEY", stopped ? _buttonActive : _button))
+                _backend.SendDemoStop(!stopped);
+            var buttonRect = new Rect(
+                rect.xMax - buttonWidth - 18f,
+                rect.yMax - 52f,
+                buttonWidth,
+                34f);
+            if (GUI.Button(buttonRect, "SKIP RL PHASE", _buttonDanger))
+                _backend.SendDemoSkipPhase();
+        }
+
+        private void SyncTrainingViewportLifecycle()
+        {
+            var demoActive = _backend.LatestState?["demo"]?.Value<bool?>("active") == true;
+            if (demoActive)
+            {
+                var trainingActive =
+                    _backend.LatestState?["demo"]?.Value<bool?>("training_view_active") == true;
+                if (trainingActive)
+                {
+                    _trainingTabOpen = true;
+                    _trainingViewportSelected = true;
+                    if (!_demoTrainingWasActive)
+                        _backend.SendSubsetPreview(true);
+                }
+                else if (_demoTrainingWasActive)
+                {
+                    _trainingViewportSelected = false;
+                    _trainingTabOpen = false;
+                    _backend.SendSubsetPreview(false);
+                }
+                _demoTrainingWasActive = trainingActive;
+                return;
+            }
+            _demoTrainingWasActive = false;
+            _trainingTabOpen = true;
+            var stage = _backend.LatestState?["policy"]?["supervisor"]?.Value<string>("stage") ?? "monitoring";
+            if (stage == "waiting_checkpoint" && _lastSupervisorStage != "waiting_checkpoint")
+            {
+                _trainingViewportSelected = true;
+                _backend.SendSubsetPreview(true);
+            }
+            _lastSupervisorStage = stage;
+        }
+
+        private void DrawViewportTabs(Rect rect)
+        {
+            GUILayout.BeginArea(rect, _chrome);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("MAIN SIMULATION", !_trainingViewportSelected ? _buttonActive : _button, GUILayout.Width(112f)))
+            {
+                _trainingViewportSelected = false;
+            }
+            if (GUILayout.Button("● RL TRAINING", _trainingViewportSelected ? _buttonDanger : _button, GUILayout.Width(105f)))
+            {
+                _trainingViewportSelected = true;
+                // Selecting the tab explicitly requests a live MuJoCo subset
+                // frame. Previously this was only enabled after a safety
+                // failure, making the tab appear to be a passive label.
+                _backend.SendSubsetPreview(true);
+            }
+            GUILayout.Label("real Everest Newton + MuJoCo PPO", _tiny);
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            GUILayout.EndArea();
+        }
+
+        private void DrawTrainingViewport(Rect rect)
+        {
+            // Keep the authoritative Everest camera visible while this tab is
+            // selected. The old full-viewport dock background made a healthy
+            // simulation look like a black/empty page.
+            if (_trainingSubscene != null && _trainingSubscene.Ready && _trainingSubscene.Texture != null)
+            {
+                var imageRect = new Rect(rect.x + 12f, rect.y + 12f, Mathf.Max(1f, rect.width - 24f), Mathf.Max(1f, rect.height - 24f));
+                GUI.DrawTexture(imageRect, _trainingSubscene.Texture, ScaleMode.ScaleToFit, false);
+            }
+            else if (_subsetTexture != null)
+            {
+                var previewWidth = Mathf.Clamp(rect.width * 0.30f, 180f, 360f);
+                var previewHeight = previewWidth * 0.75f;
+                var imageRect = new Rect(
+                    rect.xMax - previewWidth - 12f,
+                    rect.yMax - previewHeight - 12f,
+                    previewWidth,
+                    previewHeight);
+                GUI.Box(new Rect(imageRect.x - 5f, imageRect.y - 5f, imageRect.width + 10f, imageRect.height + 10f), GUIContent.none, _dock);
+                GUI.DrawTexture(imageRect, _subsetTexture, ScaleMode.ScaleToFit, false);
+            }
+            var state = _backend.LatestState;
+            var training = state?["training"] as JObject;
+            var supervisor = state?["policy"]?["supervisor"] as JObject;
+            var risk = supervisor?["detector"]?["risk"] as JObject;
+            var weather = _backend.LatestEnvironment;
+            var snow = _backend.LatestSnow;
+            var layers = snow?["layers"] as JArray;
+            var telemetryRect = new Rect(rect.x + 8f, rect.y + 8f, Mathf.Min(390f, rect.width - 16f), 214f);
+            GUILayout.BeginArea(telemetryRect, _metric);
+            var running = training?.Value<bool?>("running") == true;
+            var trainingState = training?.Value<string>("state") ?? "idle";
+            var demoActive = state?["demo"]?.Value<bool?>("active") == true;
+            GUILayout.Label(demoActive ? "RL TRAINING · CAPTURED UNITY SUBSCENE" : "RL TRAINING · MAIN UNITY PAGE", running ? _good : _warn);
+            if (_trainingSubscene != null) GUILayout.Label(_trainingSubscene.Caption, _tiny);
+            GUILayout.Label("Seed: low-friction incline · 99 observations → 29 joint actions", _tiny);
+            GUILayout.Label($"physics  {training?.Value<string>("physics") ?? "newton+mujoco"}  ·  state {trainingState}", _tiny);
+            var iteration = training?.Value<int?>("iteration") ?? 0;
+            var iterations = Mathf.Max(1, training?.Value<int?>("iterations") ?? 250);
+            var progress = Mathf.Clamp01((float)iteration / iterations);
+            GUILayout.Label($"PPO rollout  {progress:P0}  ·  process {(running ? "ACTIVE" : "IDLE")}", running ? _good : _muted);
+            var latestEnvironment = training?["latest_environment"] as JObject;
+            if (latestEnvironment != null)
+            {
+                GUILayout.Label(
+                    $"action stream  speed {latestEnvironment.Value<float?>("forward_speed_m_s") ?? 0f:0.00} m/s  ·  " +
+                    $"upright {latestEnvironment.Value<float?>("upright") ?? 0f:0.000}  ·  " +
+                    $"Newton {(latestEnvironment.Value<bool?>("newton_active") == true ? "ACTIVE" : "OFF")}",
+                    _tiny);
+            }
+            GUILayout.Label(
+                $"iteration {iteration} / {iterations}  ·  " +
+                $"steps {training?.Value<int?>("environment_steps") ?? 0}",
+                _tiny);
+            var meanReturn = training?.Value<float?>("mean_episode_return");
+            GUILayout.Label($"mean return {(meanReturn.HasValue ? meanReturn.Value.ToString("0.00") : "pending")}  ·  friction {training?.Value<float?>("friction") ?? 0.15f:0.00}", _tiny);
+            GUILayout.Label($"checkpoint  {training?.Value<string>("seed_checkpoint") ?? "not found"}", _tiny);
+            GUILayout.BeginHorizontal();
+            GUI.enabled = !running && _dataMode == "sim";
+            if (GUILayout.Button("START EVEREST PPO", _buttonActive)) _backend.SendTrainingStart();
+            GUI.enabled = running;
+            if (GUILayout.Button("STOP", _buttonDanger, GUILayout.Width(64f))) _backend.SendTrainingStop();
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+            var candidate = training?.Value<string>("latest_candidate");
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                GUILayout.Label($"candidate  {candidate}", _tiny);
+                if (!running && GUILayout.Button("LOAD CANDIDATE INTO MAIN SIM", _button))
+                    _backend.SendCheckpointReturn("ice_incline", candidate);
+            }
+            var error = training?.Value<string>("error") ?? training?.Value<string>("process_error");
+            if (!string.IsNullOrWhiteSpace(error)) GUILayout.Label(error, _warn);
+            GUILayout.Label($"request  {supervisor?.Value<string>("request_id") ?? "manual main-page run"}", _tiny);
+            GUILayout.Label(
+                $"snow {snow?.Value<float?>("surface_depth_m") ?? 0f:0.00} m / {layers?.Count ?? 0} layers  ·  " +
+                $"T {weather?.Value<float?>("temperature_c") ?? 0f:0} °C  ·  wind {weather?.Value<float?>("wind_speed_m_s") ?? 0f:0.0} m/s",
+                _tiny);
+            GUILayout.Label(
+                $"IMU tilt {risk?.Value<float?>("tilt_degrees") ?? 0f:0.0}°  ·  " +
+                $"tip {risk?.Value<float?>("tipping_rate_rad_s") ?? 0f:0.00} rad/s  ·  feet {risk?.Value<int?>("feet_in_contact") ?? 0}",
+                _tiny);
+            GUILayout.EndArea();
         }
 
         private void GetDockWidthBounds(float virtualWidth, out float minDock, out float maxDock)
@@ -423,16 +626,21 @@ namespace EverestSim
             }
 
             var paused = _runtime == null || _runtime.Paused;
+            var demoActive = _backend.LatestState?["demo"]?.Value<bool?>("active") == true;
+            var demoStopped = _backend.LatestState?["demo"]?.Value<bool?>("operator_stopped") == true;
             var supervisor = _backend.LatestState?["policy"]?["supervisor"] as JObject;
             var waitingCheckpoint = supervisor?.Value<string>("stage") == "waiting_checkpoint";
-            var playLabel = waitingCheckpoint
+            var playLabel = demoActive
+                ? (demoStopped ? "▶ RESUME" : "■ STOP")
+                : waitingCheckpoint
                 ? (veryNarrow ? "!" : "SAFETY")
                 : veryNarrow ? (paused ? "▶" : "Ⅱ") : paused ? "▶ RUN" : "Ⅱ PAUSE";
             var controlsEnabled = GUI.enabled;
-            GUI.enabled = controlsEnabled && _dataMode == "sim" && !waitingCheckpoint;
+            GUI.enabled = controlsEnabled && _dataMode == "sim" && (demoActive || !waitingCheckpoint);
             if (GUILayout.Button(playLabel, waitingCheckpoint ? _buttonDanger : paused ? _buttonActive : _button, GUILayout.Width(veryNarrow ? 34f : compact ? 62f : 68f)))
             {
-                if (paused) _backend.SendPlay();
+                if (demoActive) _backend.SendDemoStop(!demoStopped);
+                else if (paused) _backend.SendPlay();
                 else _backend.SendPause(true);
             }
             GUI.enabled = controlsEnabled && _dataMode == "sim";
@@ -467,6 +675,13 @@ namespace EverestSim
         private void DrawDock(Rect rect)
         {
             GUILayout.BeginArea(rect, _dock);
+            var demo = _backend.LatestState?["demo"] as JObject;
+            if (demo?.Value<bool?>("active") == true)
+            {
+                DrawAutonomousDemoDock(demo);
+                GUILayout.EndArea();
+                return;
+            }
             GUILayout.Label("SIMULATION CONTROLS", _sectionTitle);
             GUILayout.Label("Backend-authoritative snow, ice, rock and atmosphere", _tiny);
             GUILayout.Space(5f);
@@ -492,6 +707,61 @@ namespace EverestSim
                 GUILayout.EndScrollView();
             }
             GUILayout.EndArea();
+        }
+
+        private void DrawAutonomousDemoDock(JObject demo)
+        {
+            GUILayout.Label("EVEREST AUTONOMOUS DEMO", _sectionTitle);
+            GUILayout.Label("Unity Everest · MuJoCo robot · live Newton snow", _tiny);
+            GUILayout.Space(7f);
+
+            BeginSection("WEATHER PRESET");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("CLEAR", _button)) { ApplyWeatherPreset("clear"); ApplyEnvironment(); }
+            if (GUILayout.Button("STORM", _button)) { ApplyWeatherPreset("storm"); ApplyEnvironment(); }
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("WHITEOUT", _button)) { ApplyWeatherPreset("whiteout"); ApplyEnvironment(); }
+            if (GUILayout.Button("HIGH WIND", _button)) { ApplyWeatherPreset("wind"); ApplyEnvironment(); }
+            GUILayout.EndHorizontal();
+            Slider("Wind", ref _windSpeed, 0f, 45f, "0.0", "m/s");
+            Slider("Direction", ref _windDirection, 0f, 360f, "0", "°");
+            if (GUILayout.Button("APPLY WIND", _buttonActive)) ApplyEnvironment();
+            GUILayout.Label("Presets update cloud, fog, snowfall, and the physical MuJoCo wind magnitude.", _muted);
+            EndSection();
+
+            GUILayout.Label("AGENT DECISION STREAM", _sectionTitle);
+            var entries = demo["decision_log"] as JArray;
+            var entryCount = entries?.Count ?? 0;
+            if (entryCount != _lastDemoLogCount)
+            {
+                _lastDemoLogCount = entryCount;
+                _demoScroll.y = float.MaxValue;
+            }
+            _demoScroll = GUILayout.BeginScrollView(_demoScroll, false, true);
+            if (entryCount == 0)
+            {
+                GUILayout.Label("Waiting for the autonomous route controller…", _muted);
+            }
+            else
+            {
+                foreach (var token in entries)
+                {
+                    if (!(token is JObject entry)) continue;
+                    var role = (entry.Value<string>("role") ?? "agent").ToUpperInvariant();
+                    GUILayout.BeginVertical(_metric);
+                    GUILayout.Label(role == "AGENT" ? "EVEREST AGENT" : role, role == "SAFETY" ? _warn : _sectionTitle);
+                    var messageStyle = new GUIStyle(_muted)
+                    {
+                        fontSize = 11,
+                        normal = { textColor = Hex("DCE8F3") }
+                    };
+                    GUILayout.Label(entry.Value<string>("message") ?? string.Empty, messageStyle);
+                    GUILayout.Label($"sim {entry.Value<float?>("sim_time") ?? 0f:0.0}s", _tiny);
+                    GUILayout.EndVertical();
+                }
+            }
+            GUILayout.EndScrollView();
         }
 
         private void DrawDemoSection()
@@ -529,24 +799,28 @@ namespace EverestSim
                     var label = item.Value<string>("label") ?? key;
                     var status = item.Value<string>("status") ?? "unknown";
                     var selected = key == selectedKey;
-                    var available = status == "available" || status == "selector" || status == "demo_pretrained";
+                    var available = status == "available" || status == "candidate_available" || status == "selector";
                     var old = GUI.enabled;
                     GUI.enabled = old && available && key != "recovery";
                     if (GUILayout.Button(selected ? $"● {label}" : label, selected ? _buttonActive : _button))
                         _backend.SendPolicySelect(key);
                     GUI.enabled = old;
-                    GUILayout.Label($"{status}{(item.Value<bool?>("surrogate") == true ? " · flat checkpoint surrogate" : "")}", status == "available" ? _good : _muted);
+                    var statusLabel = status == "reserved_unavailable"
+                        ? "reserved slot · checkpoint not installed"
+                        : status == "candidate_available"
+                            ? "candidate available · not admission-validated"
+                            : status;
+                    GUILayout.Label(statusLabel, status == "available" ? _good : _muted);
                 }
             }
             var currentRoute = supervisor?["route"] as JObject;
             var requestedKey = currentRoute?.Value<string>("requested_key") ?? "ice_incline";
-            if (GUILayout.Button("RETURN DEMO-PRETRAINED CHECKPOINT", _buttonActive))
-                _backend.SendDemoPretrained(requestedKey);
+            GUILayout.Label("Specialist rows reserve stable checkpoint keys without pretending a missing RL model is loaded.", _muted);
             GUILayout.Label("REAL COMPATIBLE ONNX RETURN", _sectionTitle);
             _checkpointReturnPath = GUILayout.TextField(_checkpointReturnPath ?? "");
             if (GUILayout.Button("LOAD RETURNED CHECKPOINT", _button) && !string.IsNullOrWhiteSpace(_checkpointReturnPath))
                 _backend.SendCheckpointReturn(requestedKey, _checkpointReturnPath.Trim());
-            GUILayout.Label("Specialist rows are explicit demo-pretrained returns until a compatible ONNX checkpoint is supplied. The simulator never claims a missing model executed.", _muted);
+            GUILayout.Label("A returned policy becomes active only after the backend validates its 98-observation / 29-action ONNX schema and actuator layout.", _muted);
             EndSection();
 
             BeginSection("FAILURE / RETRAIN WORKFLOW");
@@ -644,6 +918,20 @@ namespace EverestSim
             BeginSection("PHYSICS WINDOW");
             var wasEnabled = GUI.enabled;
             GUI.enabled = wasEnabled && _dataMode == "sim";
+            var newton = _backend.LatestState?["newton"] as JObject;
+            _newtonEnabled = newton?.Value<bool?>("enabled") ?? _newtonEnabled;
+            if (GUILayout.Button(
+                    _newtonEnabled ? "NEWTON SNOW PHYSICS · ON" : "NEWTON OFF · VISUAL SNOW",
+                    _newtonEnabled ? _buttonActive : _buttonDanger))
+            {
+                _newtonEnabled = !_newtonEnabled;
+                _backend.SendNewtonEnabled(_newtonEnabled);
+            }
+            GUILayout.Label(
+                _newtonEnabled
+                    ? "Newton MPM deforms snow and couples its surface back into MuJoCo contacts."
+                    : "Visual-only snow: rigid MuJoCo support, 3.2 cm rendered boot sink, and local visual footprints.",
+                _muted);
             Slider("Radius", ref _physicsRadius, 0.75f, 6f, "0.00", "m");
             Slider("Min voxel", ref _mpmVoxelSize, 0.05f, 0.25f, "0.000", "m");
             SliderInt("Target cells", ref _physicsDetailCells, 24, 96);
@@ -663,12 +951,16 @@ namespace EverestSim
 
             var state = _backend.LatestState;
             var settings = state?["simulation_settings"] as JObject;
-            var newton = state?["newton"] as JObject;
+            newton = state?["newton"] as JObject;
             GUILayout.BeginVertical(_metric);
             var activeRadius = settings?.Value<float?>("physics_radius_m") ?? _physicsRadius;
             var voxel = newton?.Value<float?>("voxel_size_m");
             var particles = newton?.Value<int?>("particle_count") ?? 0;
-            GUILayout.Label($"ACTIVE  r {activeRadius:0.00} m   ·   {particles:N0} particles", _label);
+            GUILayout.Label(
+                _newtonEnabled
+                    ? $"ACTIVE  r {activeRadius:0.00} m   ·   {particles:N0} particles"
+                    : "VISUAL ONLY  ·  rigid contact support  ·  0 Newton particles",
+                _newtonEnabled ? _label : _warn);
             GUILayout.Label(voxel.HasValue ? $"voxel {voxel.Value:0.000} m · terrain conforming" : "rigid surface / no MPM", _tiny);
             GUILayout.EndVertical();
             GUILayout.Label("Only this moving window is high-cost Newton MPM. The surrounding snow/ice/rock shell is visual DEM LOD.", _muted);
@@ -879,7 +1171,7 @@ namespace EverestSim
                 GUILayout.Label(
                     _runtime != null && _runtime.CheatModeEnabled
                         ? "NON-PHYSICAL TRANSPORT ACTIVE"
-                        : "LMB orbit/look · RMB pan · P pause · R reset",
+                        : "LMB click walk · drag orbit · RMB pan · Esc cancel · P pause",
                     _runtime != null && _runtime.CheatModeEnabled ? _warn : _tiny);
             }
             else if (_runtime != null && _runtime.CheatModeEnabled)
@@ -1037,6 +1329,7 @@ namespace EverestSim
                     _mpmCoarseStride = settings.Value<int?>("mpm_coarse_stride") ?? _mpmCoarseStride;
                     _patchRecenter = settings.Value<float?>("patch_recenter_fraction") ?? _patchRecenter;
                     _snowAccumulationEnabled = settings.Value<bool?>("snow_accumulation_enabled") ?? _snowAccumulationEnabled;
+                    _newtonEnabled = settings.Value<bool?>("newton_enabled") ?? _newtonEnabled;
                     _weatherTimeScale = settings.Value<float?>("weather_time_scale") ?? _weatherTimeScale;
                     _cheatSpeed = settings.Value<float?>("cheat_speed_m_s") ?? _cheatSpeed;
                     _cheatYawRate = settings.Value<float?>("cheat_yaw_rate_rad_s") ?? _cheatYawRate;

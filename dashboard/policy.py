@@ -31,7 +31,12 @@ class G1VelocityPolicy:
         graph = onnx_model.graph
         tensors = {item.name: numpy_helper.to_array(item).astype(np.float32) for item in graph.initializer}
         self.mean = tensors["obs_normalizer._mean"].reshape(-1)
-        self.std = tensors["onnx::Div_24"].reshape(-1)
+        std_tensor = tensors.get("obs_normalizer._std")
+        if std_tensor is None:
+            std_tensor = tensors.get("onnx::Div_24")
+        if std_tensor is None:
+            raise ValueError(f"Policy {self.path} has no observation-normalizer standard deviation")
+        self.std = std_tensor.reshape(-1)
         self.weights = [tensors[f"mlp.{index}.weight"] for index in (0, 2, 4, 6)]
         self.biases = [tensors[f"mlp.{index}.bias"] for index in (0, 2, 4, 6)]
         self.metadata = {item.key: item.value for item in onnx_model.metadata_props}
@@ -40,7 +45,7 @@ class G1VelocityPolicy:
         self.stiffness = self._csv("joint_stiffness", 29)
         self.damping = self._csv("joint_damping", 29)
         self.joint_names = tuple(self.metadata.get("joint_names", "").split(","))
-        if self.mean.size != 98 or self.std.size != 98 or self.weights[-1].shape[0] != 29:
+        if self.mean.size not in {98, 99} or self.std.size != self.mean.size or self.weights[-1].shape[0] != 29:
             raise ValueError(f"Unexpected G1 policy schema in {self.path}")
         self.last_action = np.zeros(29, dtype=np.float32)
         self.inference_count = 0
@@ -80,8 +85,18 @@ class G1VelocityPolicy:
             base_ang_vel = np.asarray(data.sensordata[start : start + 3], dtype=np.float32)
         else:
             base_ang_vel = rotation.T @ np.asarray(data.qvel[3:6], dtype=np.float32)
+        if self.mean.size == 98:
+            return np.concatenate(
+                (base_ang_vel, gravity_b, command_array, phase, joint_pos, joint_vel, self.last_action)
+            ).astype(np.float32)
+
+        # MjLab 1.6 velocity actor ordering (99 values): body-frame linear and
+        # angular velocity, projected gravity, joint position/velocity, prior
+        # action, then the three-axis twist command. This layout has no gait
+        # phase term and must not be confused with the bundled 98-value actor.
+        base_lin_vel = rotation.T @ np.asarray(data.qvel[:3], dtype=np.float32)
         return np.concatenate(
-            (base_ang_vel, gravity_b, command_array, phase, joint_pos, joint_vel, self.last_action)
+            (base_lin_vel, base_ang_vel, gravity_b, joint_pos, joint_vel, self.last_action, command_array)
         ).astype(np.float32)
 
     def __call__(self, observation: np.ndarray) -> np.ndarray:

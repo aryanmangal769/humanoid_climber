@@ -336,7 +336,21 @@ namespace EverestSim
         public void SendRetrainRequest() => SendControl("retrain_request", JValue.CreateNull());
         public void SendDemoFailure() => SendControl("demo_failure", JValue.CreateNull());
         public void SendDemoPretrained(string key) => SendControl("demo_return_pretrained", JToken.FromObject(key));
+        public void SendDemoSkipPhase() => SendControl("demo_skip_phase", JValue.CreateNull());
+        public void SendDemoStop(bool stopped) => SendControl("demo_stop", JToken.FromObject(stopped));
         public void SendSubsetPreview(bool enabled) => SendControl("subset_preview", JToken.FromObject(enabled));
+        public void SendNavigationTarget(Vector3 unityWorld) => SendControl("navigation_target", new JArray(
+            unityWorld.x,
+            unityWorld.z));
+        public void SendNavigationCancel() => SendControl("navigation_cancel", JValue.CreateNull());
+        public void SendNewtonEnabled(bool enabled) => SendControl("newton_enabled", JToken.FromObject(enabled));
+        public void SendTrainingStart() => SendControl("training_start", new JObject
+        {
+            ["iterations"] = 250,
+            ["rollout_steps"] = 1024,
+            ["friction"] = 0.15f
+        });
+        public void SendTrainingStop() => SendControl("training_stop", JValue.CreateNull());
         public void SendCheckpointReturn(string key, string path) => SendControl("checkpoint_return", new JObject
         {
             ["key"] = key,

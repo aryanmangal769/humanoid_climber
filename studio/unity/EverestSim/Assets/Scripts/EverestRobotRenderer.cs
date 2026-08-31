@@ -20,6 +20,8 @@ namespace EverestSim
         private Transform _root;
         private long _sequence = -1;
         private long _sourceEpoch = -1;
+        private float _renderSinkOffset;
+        private bool _visualOnlySnow;
 
         public float InterpolationSharpness = 28f;
         public JObject LatestFeet { get; private set; }
@@ -126,6 +128,8 @@ namespace EverestSim
             _sequence = sequence;
             SimTime = frame.Value<double?>("sim_time") ?? SimTime;
             LatestFeet = frame["feet"] as JObject;
+            _renderSinkOffset = Mathf.Clamp(frame.Value<float?>("render_sink_offset_m") ?? 0f, 0f, 0.12f);
+            _visualOnlySnow = frame.Value<bool?>("visual_only_snow") == true;
 
             var names = frame["body_names"] as JArray;
             var positions = frame["body_pos_w"] as JArray;
@@ -139,7 +143,12 @@ namespace EverestSim
                 if (string.IsNullOrWhiteSpace(name)) continue;
                 if (!_bodies.TryGetValue(name, out var body)) body = CreateBody(name);
                 body.Transform.gameObject.SetActive(true);
-                body.Position = EverestCoordinates.Position(positions[i]);
+                var visualSink = !_visualOnlySnow
+                    || name.IndexOf("foot", StringComparison.OrdinalIgnoreCase) >= 0
+                    || name.IndexOf("ankle", StringComparison.OrdinalIgnoreCase) >= 0
+                    ? _renderSinkOffset
+                    : 0f;
+                body.Position = EverestCoordinates.Position(positions[i]) + Vector3.down * visualSink;
                 body.Rotation = EverestCoordinates.RotationWxyz(rotations[i]);
                 if (!body.HasPose)
                 {

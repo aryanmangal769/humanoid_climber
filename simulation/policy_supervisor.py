@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import asdict, dataclass
+import importlib.util
 import math
+import os
+from pathlib import Path
+import sys
 import time
 from typing import Any
 
@@ -24,6 +28,33 @@ PREDICTED_TILT_DEGREES = 28.0
 PREDICTED_MIN_TILT_DEGREES = 10.0
 PREDICTED_MIN_TIPPING_RATE_RAD_S = 0.25
 IMBALANCE_CONFIRMATION_FRAMES = 3
+HUMANOID_CLIMBER_SAFETY_PATH = Path(os.environ.get(
+    "EVEREST_SAFETY_MODEL_PATH",
+    "/home/auverus/git/humanoid_climber_safety_ckpts/src/humanoid_climber/safety.py",
+))
+
+
+def _load_humanoid_climber_safety():
+    """Load the detector directly from the requested safety checkout."""
+    if not HUMANOID_CLIMBER_SAFETY_PATH.is_file():
+        return None, None
+    name = "_everest_humanoid_climber_safety"
+    spec = importlib.util.spec_from_file_location(name, HUMANOID_CLIMBER_SAFETY_PATH)
+    if spec is None or spec.loader is None:
+        return None, None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module.predict_imbalance, module.outside_centerline
+
+
+_HUMANOID_CLIMBER_PREDICT, _HUMANOID_CLIMBER_OUTSIDE_CENTERLINE = _load_humanoid_climber_safety()
+
+
+def outside_centerline(lateral_offset_m: float) -> bool:
+    if _HUMANOID_CLIMBER_OUTSIDE_CENTERLINE is not None:
+        return bool(_HUMANOID_CLIMBER_OUTSIDE_CENTERLINE(lateral_offset_m))
+    return math.isfinite(float(lateral_offset_m)) and abs(float(lateral_offset_m)) > 1.0
 
 
 @dataclass(frozen=True)
@@ -50,6 +81,17 @@ def predict_imbalance(
     angular_velocity_xyz_rad_s: tuple[float, float, float],
     feet_in_contact: int,
 ) -> FailureRisk:
+    if _HUMANOID_CLIMBER_PREDICT is not None:
+        risk = _HUMANOID_CLIMBER_PREDICT(
+            up_vector_xyz, angular_velocity_xyz_rad_s, feet_in_contact
+        )
+        return FailureRisk(
+            tilt_degrees=float(risk.tilt_degrees),
+            tipping_rate_rad_s=float(risk.tipping_rate_rad_s),
+            projected_tilt_degrees=float(risk.projected_tilt_degrees),
+            feet_in_contact=int(risk.feet_in_contact or 0),
+            triggered=bool(risk.triggered),
+        )
     up_x, up_y, up_z = (float(value) for value in up_vector_xyz)
     norm = math.sqrt(up_x * up_x + up_y * up_y + up_z * up_z)
     if not math.isfinite(norm) or norm <= 1.0e-8:
@@ -83,12 +125,10 @@ def route_policy(context: dict[str, Any]) -> PolicyRoute:
     fallen = bool(context.get("fallen", False))
     if fallen:
         return PolicyRoute("fallen / recovery", "recovery", "Supine recovery", 0.98, True, "Failure detector confirmed a fall.")
-    if slope > 0.20 or friction < 0.10 or roughness > 0.10 or wind > 18.0:
+    if slope > 0.20 or friction < 0.10 or roughness > 0.10:
         return PolicyRoute("out-of-envelope terrain", "new_specialist", "New terrain specialist", 0.88, True, "Observed conditions exceed all validated envelopes.")
     if roughness > 0.03:
         return PolicyRoute("rough / stepped terrain", "rough", "Rough-terrain walker", 0.82, True, "No compatible rough-terrain checkpoint is loaded.")
-    if wind > 6.0 and (slope > 0.06 or friction < 0.15):
-        return PolicyRoute("wind + low-traction incline", "new_specialist", "Combined-condition specialist", 0.84, True, "Wind and low traction require a combined specialist.")
     if wind > 6.0:
         return PolicyRoute("wind-exposed terrain", "wind", "Wind walker", 0.86, True, "Wind specialist requested.")
     if slope > 0.06 or friction < 0.30:
@@ -178,8 +218,9 @@ class PolicySupervisor:
     def manifest(self) -> dict[str, Any]:
         return {
             "detector": {
-                "kind": "deterministic_imu_contact",
-                "source": "humanoid_climber/safety.py",
+                "kind": "humanoid_climber_imu_contact",
+                "source": str(HUMANOID_CLIMBER_SAFETY_PATH),
+                "loaded_from_source_checkout": _HUMANOID_CLIMBER_PREDICT is not None,
                 "confirmation_frames": IMBALANCE_CONFIRMATION_FRAMES,
                 "risk": asdict(self.risk),
             },

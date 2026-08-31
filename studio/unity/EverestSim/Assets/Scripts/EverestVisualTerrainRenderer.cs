@@ -69,6 +69,82 @@ namespace EverestSim
             RebuildMacro();
         }
 
+        public bool TryPickTerrain(Ray ray, out Vector3 point)
+        {
+            point = Vector3.zero;
+            var havePrevious = false;
+            var previousT = 0f;
+            var previousSignedHeight = 0f;
+            var t = Mathf.Max(0f, ray.origin.y > 0f ? 0.05f : 0f);
+            for (var sample = 0; sample < 1400 && t <= 30000f; ++sample)
+            {
+                var candidate = ray.GetPoint(t);
+                if (TrySampleHeight(candidate.x, candidate.z, out var terrainY))
+                {
+                    var signedHeight = candidate.y - terrainY;
+                    if (havePrevious && signedHeight <= 0f && previousSignedHeight > 0f)
+                    {
+                        var low = previousT;
+                        var high = t;
+                        for (var iteration = 0; iteration < 14; ++iteration)
+                        {
+                            var mid = (low + high) * 0.5f;
+                            var probe = ray.GetPoint(mid);
+                            if (!TrySampleHeight(probe.x, probe.z, out var probeY) || probe.y > probeY)
+                                low = mid;
+                            else
+                                high = mid;
+                        }
+                        point = ray.GetPoint(high);
+                        if (TrySampleHeight(point.x, point.z, out var finalY)) point.y = finalY;
+                        return true;
+                    }
+                    havePrevious = true;
+                    previousT = t;
+                    previousSignedHeight = signedHeight;
+                }
+                t += Mathf.Clamp(t * 0.018f, 0.18f, 20f);
+            }
+            return false;
+        }
+
+        private bool TrySampleHeight(float worldX, float worldZ, out float worldY)
+        {
+            if (TrySampleHeight(_localData, worldX, worldZ, out worldY)) return true;
+            return TrySampleHeight(_macroData, worldX, worldZ, out worldY);
+        }
+
+        private static bool TrySampleHeight(JObject terrain, float worldX, float worldZ, out float worldY)
+        {
+            worldY = 0f;
+            if (terrain == null) return false;
+            var width = terrain.Value<int?>("grid_width") ?? 0;
+            var height = terrain.Value<int?>("grid_height") ?? 0;
+            var worldWidth = terrain.Value<float?>("world_width_m") ?? 0f;
+            var worldDepth = terrain.Value<float?>("world_depth_m") ?? 0f;
+            var heights = terrain["heights"] as JArray;
+            if (width < 2 || height < 2 || worldWidth <= 0f || worldDepth <= 0f
+                || heights == null || heights.Count < width * height) return false;
+            var center = EverestCoordinates.Position(terrain["terrain_center"]);
+            var u = (worldX - center.x) / worldWidth + 0.5f;
+            var v = (worldZ - center.z) / worldDepth + 0.5f;
+            if (u < 0f || u > 1f || v < 0f || v > 1f) return false;
+            var column = u * (width - 1);
+            var row = v * (height - 1);
+            var x0 = Mathf.Clamp(Mathf.FloorToInt(column), 0, width - 1);
+            var y0 = Mathf.Clamp(Mathf.FloorToInt(row), 0, height - 1);
+            var x1 = Mathf.Min(width - 1, x0 + 1);
+            var y1 = Mathf.Min(height - 1, y0 + 1);
+            var tx = column - x0;
+            var ty = row - y0;
+            var a = heights[y0 * width + x0].Value<float>();
+            var b = heights[y0 * width + x1].Value<float>();
+            var c = heights[y1 * width + x0].Value<float>();
+            var d = heights[y1 * width + x1].Value<float>();
+            worldY = center.y + Mathf.Lerp(Mathf.Lerp(a, b, tx), Mathf.Lerp(c, d, tx), ty) + 0.012f;
+            return true;
+        }
+
         private void RebuildLocal()
         {
             if (_localData == null) return;
@@ -99,7 +175,8 @@ namespace EverestSim
                     $"{name} · LOD{i}",
                     terrain,
                     Mathf.Clamp(baseStep * multipliers[i], 1, 64),
-                    macro);
+                    macro,
+                    i == 0);
                 if (child == null) continue;
                 child.transform.SetParent(parent.transform, true);
                 lods[i] = new LOD(thresholds[i], new[] { child.GetComponent<MeshRenderer>() });
@@ -113,7 +190,7 @@ namespace EverestSim
             return parent;
         }
 
-        private GameObject BuildMesh(string name, JObject terrain, int step, bool macro)
+        private GameObject BuildMesh(string name, JObject terrain, int step, bool macro, bool clickable)
         {
             var width = terrain.Value<int?>("grid_width") ?? 0;
             var height = terrain.Value<int?>("grid_height") ?? 0;
@@ -201,6 +278,12 @@ namespace EverestSim
             renderer.sharedMaterial = BuildMaterial(macro);
             renderer.shadowCastingMode = macro ? ShadowCastingMode.Off : ShadowCastingMode.On;
             renderer.receiveShadows = true;
+            if (clickable)
+            {
+                var collider = go.AddComponent<MeshCollider>();
+                collider.sharedMesh = mesh;
+                go.AddComponent<EverestTerrainClickSurface>();
+            }
             return go;
         }
 
@@ -272,5 +355,10 @@ namespace EverestSim
             foreach (var material in _materials)
                 if (material != null) Destroy(material);
         }
+    }
+
+    /// <summary>Marker component used to reject ray hits on non-terrain scene objects.</summary>
+    public sealed class EverestTerrainClickSurface : MonoBehaviour
+    {
     }
 }

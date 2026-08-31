@@ -186,19 +186,15 @@ async def main() -> None:
             }, expected_ok=False)
             assert "checkpoint" in bad_return.get("message", "").lower() or "onnx" in bad_return.get("message", "").lower(), bad_return
 
-            await control(ws, "demo_return_pretrained", "ice_incline")
-            active = None
-            deadline = time.monotonic() + 6.0
-            while time.monotonic() < deadline:
+            reserved_return = await control(
+                ws, "demo_return_pretrained", "ice_incline", expected_ok=False,
+            )
+            assert "shortcut is disabled" in reserved_return.get("message", ""), reserved_return
+            await control(ws, "reset")
+            while True:
                 candidate = await recv_until(ws, "state", timeout=3.0)
-                supervisor = candidate.get("policy", {}).get("supervisor", {})
-                if supervisor.get("stage") == "policy_active":
-                    active = candidate
+                if candidate.get("policy", {}).get("supervisor", {}).get("stage") == "monitoring":
                     break
-            assert active is not None, "demo checkpoint did not activate"
-            assert active["policy"]["selected_policy_key"] == "ice_incline"
-            assert active["policy"]["supervisor"]["active_policy_key"] == "ice_incline"
-            assert active["policy"]["supervisor"]["demo_pretrained"] is True
 
             await control(ws, "weather", {
                 "temperature_c": -24.0,

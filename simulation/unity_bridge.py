@@ -27,6 +27,7 @@ from simulation.live_telemetry import (
     ReplayTelemetryAdapter,
     UdpTelemetryAdapter,
 )
+from training.runtime import EverestTrainingRuntime
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -102,12 +103,23 @@ class UnityRendererBridge:
         *,
         particles: bool = False,
         live_source: LiveDataSource | None = None,
+        enable_newton: bool = True,
+        demo: str | None = None,
     ) -> None:
         if not MACRO_TERRAIN.is_file():
             raise FileNotFoundError(
                 f"Macro terrain missing: {MACRO_TERRAIN}. Run maps/build_unity_terrain.py."
             )
-        self.engine = MuJoCoEngine(telemetry_hz=60.0)
+        self.engine = MuJoCoEngine(
+            telemetry_hz=60.0,
+            enable_newton=enable_newton,
+            demo=demo,
+        )
+        # Training is exposed only by the normal Unity operator page. Demo
+        # showcase instances intentionally have no trainer control surface.
+        # Demo training is represented by the captured subset replay. The
+        # operator can still run the real trainer from the normal page.
+        self.training = EverestTrainingRuntime() if demo is None else None
         self.engine.control("snow_parameters", copy.deepcopy(DEFAULT_SNOW))
         self.data_mode = "sim"
         self.environment = copy.deepcopy(DEFAULT_ENVIRONMENT)
@@ -115,6 +127,7 @@ class UnityRendererBridge:
         self.source_epoch = 1
         self._live_generation = live_source.generation if live_source is not None else 0
         self.include_particles = particles
+        self._demo_started = False
         self.macro_terrain = json.loads(MACRO_TERRAIN.read_text())
         self.engine.start()
         if self.live_source is not None:
@@ -124,9 +137,20 @@ class UnityRendererBridge:
                 list(layout.get("joint_names", [])),
             )
 
+    def on_client_connected(self, *, browser_origin: bool) -> None:
+        if browser_origin and self.engine.state().get("demo", {}).get("active"):
+            # A browser reload is a new demo run. The bridge is a singleton,
+            # so retaining recovered_once/training state across WebSocket
+            # clients made a freshly loaded Unity page unable to trigger its
+            # one allowed safety incident. Reset on every demo connection.
+            self._demo_started = True
+            self.engine.reset()
+
     def close(self) -> None:
         if self.live_source is not None:
             self.live_source.close()
+        if self.training is not None:
+            self.training.close()
         self.engine.stop()
 
     def _refresh_live_epoch(self) -> None:
@@ -187,7 +211,7 @@ class UnityRendererBridge:
             "sequence": int(frame["sequence"]),
             "timestamp": float(frame["timestamp"]),
             "sim_time": float(frame["sim_time"]),
-            "engine": "newton+mujoco",
+            "engine": frame.get("engine", "mujoco"),
             "body_names": frame["body_names"],
             "body_pos_w": frame["body_pos_w"],
             "body_quat_w": frame["body_quat_w"],
@@ -199,6 +223,8 @@ class UnityRendererBridge:
             "joint_torques": frame["joint_torques"],
             "command": frame["command"],
             "feet": frame["feet"],
+            "render_sink_offset_m": float(frame.get("render_sink_offset_m", 0.0)),
+            "visual_only_snow": bool(frame.get("visual_only_snow", False)),
             "paused": bool(frame["paused"]),
             "data_mode": "sim",
             "source_epoch": self.source_epoch,
@@ -289,7 +315,7 @@ class UnityRendererBridge:
             source["epoch"] = self.source_epoch
         else:
             source = {
-                "kind": "newton+mujoco",
+                "kind": raw.get("engine", "mujoco"),
                 "name": "local-simulator",
                 "status": "connected" if raw.get("telemetry_error") is None else "disconnected",
                 "epoch": self.source_epoch,
@@ -310,7 +336,7 @@ class UnityRendererBridge:
             "sequence": int(raw.get("frames", 0)),
             "timestamp": time.time(),
             "sim_time": float(raw.get("sim_time", 0.0)),
-            "engine": "newton+mujoco" if self.data_mode == "sim" else source["kind"],
+            "engine": raw.get("engine", "mujoco") if self.data_mode == "sim" else source["kind"],
             "data_mode": self.data_mode,
             "source": source,
             "control_authority": "simulation" if self.data_mode == "sim" else "read_only",
@@ -321,7 +347,9 @@ class UnityRendererBridge:
             "manual_force_mode": bool((raw.get("simulation_settings") or {}).get("manual_force_mode", False)),
             "mujoco": {"active": raw.get("telemetry_error") is None},
             "newton": {
+                "enabled": bool((raw.get("simulation_settings") or {}).get("newton_enabled", True)),
                 "active": bool(raw.get("snow", {}).get("mpm_active")),
+                "visual_only": bool(raw.get("snow", {}).get("visual_only", False)),
                 "solver": mpm.get("solver", "SolverImplicitMPM"),
                 "device": mpm.get("device"),
                 "particle_count": int(mpm.get("particle_count", 0)),
@@ -350,9 +378,26 @@ class UnityRendererBridge:
                 "subset_preview_enabled": bool(policy.get("subset_preview_enabled", False)),
                 "subset_preview_error": policy.get("subset_preview_error"),
             },
+            "navigation": copy.deepcopy(raw.get("navigation") or {
+                "active": False,
+                "state": "idle",
+                "target": None,
+                "path": "straight_line",
+            }),
+            "training": (
+                self.training.status()
+                if self.training is not None
+                else {
+                    "schema": "everest-rl-training/v1",
+                    "state": "disabled_in_demo",
+                    "running": False,
+                    "demo_enabled": False,
+                }
+            ),
             "paused": bool(raw.get("paused", True)),
             "simulation_fault": raw.get("simulation_fault") or raw.get("telemetry_error"),
             "snow_history": copy.deepcopy(raw.get("snow_history") or {}),
+            "demo": copy.deepcopy(raw.get("demo") or {"active": False}),
         }
         if self.data_mode == "live":
             # These fields describe the parked local simulator and must not be
@@ -417,6 +462,18 @@ class UnityRendererBridge:
             self.environment["data_mode"] = mode
             self.source_epoch += 1
             return
+        if action == "training_status":
+            if self.training is None:
+                return
+            return self.training.status()
+        if action == "training_start":
+            if self.training is None:
+                raise ValueError("RL training is unavailable")
+            return self.training.start(value)
+        if action == "training_stop":
+            if self.training is None:
+                raise ValueError("RL training is disabled in demo mode")
+            return self.training.stop()
         if self.data_mode == "live":
             raise ControlRejected(
                 f"{action} is read-only in LIVE mode",
@@ -454,7 +511,8 @@ class UnityRendererBridge:
         if action in {
             "command", "pause", "play", "reset", "snow_parameters", "policy_select",
             "retrain_request", "demo_failure", "demo_return_pretrained", "subset_preview",
-            "checkpoint_return",
+            "checkpoint_return", "demo_skip_phase", "navigation_target", "navigation_cancel",
+            "newton_enabled", "demo_stop",
         }:
             self.engine.control(action, value)
             if action == "snow_parameters" and isinstance(value, dict):
@@ -466,6 +524,8 @@ class UnityRendererBridge:
 
 
 async def _serve_client(socket: ServerConnection, bridge: UnityRendererBridge) -> None:
+    origin = socket.request.headers.get("Origin") if socket.request is not None else None
+    bridge.on_client_connected(browser_origin=bool(origin))
     await socket.send(_message("scene", bridge.scene()))
     await socket.send(_message("terrain", bridge.local_terrain()))
     await socket.send(_message("macro_terrain", bridge.macro()))
@@ -556,7 +616,13 @@ async def _serve_client(socket: ServerConnection, bridge: UnityRendererBridge) -
                     last_fault = fault
                     next_state = now + 0.5
                 if now >= next_subset and bridge.data_mode == "sim":
-                    subset = bridge.engine.subset_preview()
+                    subset = (
+                        bridge.training.preview()
+                        if bridge.training is not None and bridge.training.status().get("running")
+                        else None
+                    )
+                    if subset is None:
+                        subset = bridge.engine.subset_preview()
                     if subset is not None:
                         await socket.send(_message("subset_view", subset))
                     next_subset = now + 1.0
@@ -604,8 +670,15 @@ async def _run(
     port: int,
     particles: bool,
     live_source: LiveDataSource | None,
+    enable_newton: bool,
+    demo: str | None,
 ) -> None:
-    bridge = UnityRendererBridge(particles=particles, live_source=live_source)
+    bridge = UnityRendererBridge(
+        particles=particles,
+        live_source=live_source,
+        enable_newton=enable_newton,
+        demo=demo,
+    )
     try:
         async with websockets.serve(
             lambda socket: _serve_client(socket, bridge),
@@ -631,6 +704,16 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--probe", action="store_true")
     parser.add_argument("--particles", action="store_true", help="include raw MPM particles in snow messages")
+    parser.add_argument(
+        "--disable-newton",
+        action="store_true",
+        help="run MuJoCo robot/DEM physics without Newton deformable snow coupling",
+    )
+    parser.add_argument(
+        "--demo",
+        choices=("autonomous-showcase",),
+        help="run a separate scripted showcase while retaining the Unity Everest rendering pipeline",
+    )
     parser.add_argument(
         "--live-adapter",
         choices=("disabled", "replay", "json-file", "udp"),
@@ -677,13 +760,25 @@ def main() -> None:
             stale_after_ms=args.live_stale_ms,
         )
     if args.probe:
-        bridge = UnityRendererBridge(particles=args.particles, live_source=live_source)
+        bridge = UnityRendererBridge(
+            particles=args.particles,
+            live_source=live_source,
+            enable_newton=not args.disable_newton,
+            demo=args.demo,
+        )
         try:
             _probe(bridge, args.host, args.port)
         finally:
             bridge.close()
         return
-    asyncio.run(_run(args.host, args.port, args.particles, live_source))
+    asyncio.run(_run(
+        args.host,
+        args.port,
+        args.particles,
+        live_source,
+        not args.disable_newton,
+        args.demo,
+    ))
 
 
 if __name__ == "__main__":

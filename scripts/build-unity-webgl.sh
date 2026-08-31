@@ -12,18 +12,20 @@ if [[ ! -x "$UNITY_EXE" ]]; then
   exit 1
 fi
 
+python3 "$ROOT/scripts/verify_demo_training_contract.py"
 EVEREST_UNITY_WINDOWS_DIR="$WEB_PROJECT" "$ROOT/scripts/sync-unity-windows.sh" >/dev/null
 WIN_PROJECT="$(wslpath -w "$WEB_PROJECT")"
 WIN_LOG="$WIN_PROJECT\\webgl-build.log"
+OUTPUT="${EVEREST_WEBGL_OUT:-$WEB_PROJECT/Builds/WebGL}"
+WIN_OUTPUT="$(wslpath -w "$OUTPUT")"
 
-"$UNITY_EXE" \
+EVEREST_WEBGL_OUT="$WIN_OUTPUT" "$UNITY_EXE" \
   -batchmode \
   -quit \
   -projectPath "$WIN_PROJECT" \
   -executeMethod EverestSim.Editor.EverestWebBuild.BuildWebGL \
   -logFile "$WIN_LOG"
 
-OUTPUT="$WEB_PROJECT/Builds/WebGL"
 if [[ ! -f "$OUTPUT/index.html" ]]; then
   echo "Unity reported success but $OUTPUT/index.html is missing" >&2
   exit 1

@@ -21,7 +21,11 @@ namespace EverestSim.Editor
             PlayerSettings.companyName = "Everest Dream";
             PlayerSettings.productName = "Everest Dream";
             PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Disabled;
-            PlayerSettings.WebGL.dataCaching = true;
+            // The operator page is rebuilt in place while a browser may stay
+            // open. Unity's IndexedDB data cache can otherwise pair an old
+            // WebGL.data with a new wasm/framework bundle, producing the
+            // ``JS_ScreenOrientation_eventHandler`` null-callback crash.
+            PlayerSettings.WebGL.dataCaching = false;
             PlayerSettings.WebGL.initialMemorySize = 256;
             PlayerSettings.WebGL.memoryGrowthMode = WebGLMemoryGrowthMode.Geometric;
             PlayerSettings.WebGL.maximumMemorySize = 1024;

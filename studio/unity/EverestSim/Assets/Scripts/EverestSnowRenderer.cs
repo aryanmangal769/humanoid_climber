@@ -26,10 +26,13 @@ namespace EverestSim
         private long _sequence = -1;
         private long _sourceEpoch = -1;
         private Vector3[] _targetVertices;
+        private Vector3[] _visualBaseVertices;
         private Color[] _targetColors;
         private Vector3[] _targetVolumeVertices;
         private Color[] _targetVolumeColors;
         private bool _hasSurface;
+        private bool _visualOnly;
+        private readonly List<Vector3> _visualFeet = new List<Vector3>();
 
         public int LayerCount { get; private set; }
         public float SurfaceDepthM { get; private set; }
@@ -142,6 +145,8 @@ namespace EverestSim
             EnsureMesh(width, height);
             if (_targetVertices == null || _targetVertices.Length != width * height)
                 _targetVertices = new Vector3[width * height];
+            if (_visualBaseVertices == null || _visualBaseVertices.Length != width * height)
+                _visualBaseVertices = new Vector3[width * height];
             if (_targetColors == null || _targetColors.Length != width * height)
                 _targetColors = new Color[width * height];
 
@@ -165,10 +170,11 @@ namespace EverestSim
                     var backendX = backendOriginX + (col + 0.5f) * dx;
                     var backendY = backendOriginY + (row + 0.5f) * dz;
                     var backendZ = heights[i].Value<float>();
-                    _targetVertices[i] = ReadBackendVertex(
+                    _visualBaseVertices[i] = ReadBackendVertex(
                         backendVertices,
                         i,
                         new Vector3(backendX, backendZ, backendY)) + Vector3.up * 0.004f;
+                    _targetVertices[i] = _visualBaseVertices[i];
 
                     var compact = compaction != null && i < compaction.Count
                         ? Mathf.Clamp01(compaction[i].Value<float>())
@@ -198,6 +204,7 @@ namespace EverestSim
                 layerVertices,
                 substrateVertices,
                 layerColors);
+            ApplyVisualOnlyFootprints();
 
             if (!_hasSurface)
             {
@@ -206,6 +213,51 @@ namespace EverestSim
                 _mesh.RecalculateNormals();
                 _mesh.RecalculateBounds();
                 _hasSurface = true;
+            }
+        }
+
+        public void SetVisualOnly(bool enabled)
+        {
+            if (_visualOnly == enabled) return;
+            _visualOnly = enabled;
+            ApplyVisualOnlyFootprints();
+        }
+
+        public void OnFeet(JObject feet)
+        {
+            _visualFeet.Clear();
+            if (feet != null)
+            {
+                foreach (var side in new[] { "left", "right" })
+                {
+                    var foot = feet[side] as JObject;
+                    if (foot?["position"] != null)
+                        _visualFeet.Add(EverestCoordinates.Position(foot["position"]));
+                }
+            }
+            if (_visualOnly) ApplyVisualOnlyFootprints();
+        }
+
+        private void ApplyVisualOnlyFootprints()
+        {
+            if (_targetVertices == null || _visualBaseVertices == null
+                || _targetVertices.Length != _visualBaseVertices.Length) return;
+            for (var i = 0; i < _targetVertices.Length; ++i)
+            {
+                var vertex = _visualBaseVertices[i];
+                var sink = 0f;
+                if (_visualOnly)
+                {
+                    foreach (var foot in _visualFeet)
+                    {
+                        var distance = Vector2.Distance(
+                            new Vector2(vertex.x, vertex.z),
+                            new Vector2(foot.x, foot.z));
+                        var influence = Mathf.Clamp01(1f - distance / 0.19f);
+                        sink = Mathf.Max(sink, 0.038f * influence * influence);
+                    }
+                }
+                _targetVertices[i] = vertex + Vector3.down * sink;
             }
         }
 
@@ -445,7 +497,8 @@ namespace EverestSim
             if (vertices.Length != _targetVertices.Length) return;
             if (colors == null || colors.Length != vertices.Length) colors = new Color[vertices.Length];
 
-            // Presentation interpolation only. All targets are backend-authored.
+            // Newton-on targets are backend-authored. In explicit visual-only
+            // mode the target also includes bounded, non-physical boot dimples.
             var blend = 1f - Mathf.Exp(-20f * Time.unscaledDeltaTime);
             var geometryDirty = false;
             var colorDirty = false;
@@ -499,6 +552,7 @@ namespace EverestSim
             _height = height;
             _hasSurface = false;
             _targetVertices = null;
+            _visualBaseVertices = null;
             _targetColors = null;
 
             var vertices = new Vector3[width * height];
