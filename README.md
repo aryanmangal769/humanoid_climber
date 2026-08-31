@@ -76,6 +76,11 @@ UV_PROJECT_ENVIRONMENT=.venv-rl uv sync
 
 ## Run locally
 
+The trained policy checkpoints and recovery motion are distributed privately
+and are not stored in this public repository. Before launching, place the
+provided artifact bundle at the repository root so it restores the expected
+`ckpt/` and `private_assets/recovery/` paths.
+
 ```bash
 UV_PROJECT_ENVIRONMENT=.venv-rl uv run hum-climber-play \
   HumClimber-Velocity-Randomized-Unitree-G1 \
@@ -92,12 +97,13 @@ running while using the browser.
 
 - `src/humanoid_climber/` — orchestration, routing, task configuration, safety,
   recovery adaptation, and viewer integration.
-- `ckpt/` — locomotion and recovery checkpoints used by the showcase.
-- `private_assets/recovery/` — local recovery motion reference required by the
-  recovery adapter.
 - `assets/presentation/` — recorded specialist-policy clips.
 - `tests/` — routing, safety, recovery, and compiled-scene validation.
 - `presentation.html` — browser-based SummitOS presentation.
+
+At runtime, privately distributed artifacts populate `ckpt/` with locomotion
+and recovery checkpoints and `private_assets/recovery/` with the recovery
+motion reference.
 
 ## Validation
 
